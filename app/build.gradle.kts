@@ -172,7 +172,7 @@ dependencies {
     implementation(libs.compose.ui)
     implementation(libs.compose.ui.tooling.preview)
     implementation(libs.mlkit.common)
-    androidTestImplementation(libs.compose.ui.test.junit4)
+    // androidTestImplementation(libs.compose.ui.test.junit4)
     debugImplementation(libs.compose.ui.tooling)
     implementation(libs.activity.compose)
 
