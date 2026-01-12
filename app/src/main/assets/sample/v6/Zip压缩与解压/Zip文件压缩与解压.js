@@ -4,7 +4,7 @@ $files.create("/sdcard/脚本/zip_test/");
 $files.create("/sdcard/脚本/zip_out/");
 $files.write("/sdcard/脚本/zip_test/1.txt", "Hello, World");
 $files.write("/sdcard/脚本/zip_test/2.txt", "GoodBye, World");
-$files.write("/sdcard/脚本/zip_test/3.txt", "Autox.js");
+$files.write("/sdcard/脚本/zip_test/3.txt", "AutoR.js");
 
 // 1. 压缩文件夹
 // 要压缩的文件夹路径
@@ -18,7 +18,7 @@ $zip.zipDir(dir, zipFile);
 let encryptedZipFile = '/sdcard/脚本/zip_out/加密.zip';
 $files.remove(encryptedZipFile);
 $zip.zipDir(dir, encryptedZipFile, {
-    password: 'Autox.js'
+    password: 'AutoR.js'
 });
 
 // 3. 压缩单个文件
@@ -37,7 +37,7 @@ $zip.unzip('/sdcard/脚本/zip_out/未加密.zip', '/sdcard/脚本/zip_out/未�
 
 // 6. 解压加密的zip
 $zip.unzip('/sdcard/脚本/zip_out/加密.zip', '/sdcard/脚本/zip_out/加密/', {
-    password: 'Autox.js'
+    password: 'AutoR.js'
 });
 
 // 7. 从压缩包删除文件

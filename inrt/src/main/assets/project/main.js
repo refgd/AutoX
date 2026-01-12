@@ -7,7 +7,6 @@ ui.layout(
        <Button id="console" text="打开日志"/>
        <Button id="setting" text="打开设置"/>
        <Button id="zip1"  text="测试7zip" />
-       <Button id="gmlkitocr"  text="测试Google mlkit OCR" />
     </vertical>
 );
 ui.ok.click(function(){
@@ -24,11 +23,6 @@ ui.setting.click(function(){
 ui.zip1.click(function(){
     //通过getText()获取输入的内容
     engines.execScriptFile("7zip.js");
-});
-
-ui.gmlkitocr.click(function(){
-    //通过getText()获取输入的内容
-    engines.execScriptFile("gmlkit_ocr.js");
 });
 
 ui.autoService.on("check", function (checked) {

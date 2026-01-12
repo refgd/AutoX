@@ -193,7 +193,9 @@
                 <action android:name="com.twofortyfouram.locale.intent.action.EDIT_SETTING" />
             </intent-filter>
         </activity-alias>
-
+        <service
+            android:name="org.autojs.autojs.devplugin.DevPluginKickService"
+            android:exported="false" />
         <service
             android:name="org.autojs.autojs.external.tile.LayoutBoundsTile"
             android:exported="true"

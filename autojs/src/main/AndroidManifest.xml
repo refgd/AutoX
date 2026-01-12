@@ -55,10 +55,6 @@
             android:process="@string/text_script_process_name"
             android:theme="@style/ScriptTheme" />
         <activity
-            android:name="com.aiselp.autox.activity.VueUiScriptActivity"
-            android:configChanges="fontScale|keyboard|keyboardHidden|locale|navigation|orientation|screenLayout|screenSize|uiMode"
-            android:process="@string/text_script_process_name" />
-        <activity
             android:name="com.github.aiselp.autox.activity.TransparentActivity"
             android:process="@string/text_script_process_name"
             android:theme="@style/TransparentDialogTheme" />
@@ -117,10 +113,6 @@
                 android:resource="@xml/method" />
         </service>
 
-        <provider
-            android:name="com.google.mlkit.common.internal.MlKitInitProvider"
-            android:authorities="${applicationId}.mlkitinitprovider"
-            tools:node="remove" />
         <provider
             android:name="rikka.shizuku.ShizukuProvider"
             android:authorities="${applicationId}.shizuku"

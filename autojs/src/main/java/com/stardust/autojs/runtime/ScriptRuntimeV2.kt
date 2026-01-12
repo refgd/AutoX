@@ -12,16 +12,13 @@ import com.stardust.autojs.core.http.MutableOkHttp
 import com.stardust.autojs.core.image.capture.ScreenCaptureRequester
 import com.stardust.autojs.core.looper.Loopers
 import com.stardust.autojs.core.util.WeakReferenceKey
-import com.stardust.autojs.onnx.OnnxModule
 import com.stardust.autojs.rhino.AndroidClassLoader
 import com.stardust.autojs.rhino.TopLevelScope
 import com.stardust.autojs.runtime.api.AppUtils
 import com.stardust.autojs.runtime.api.Console
 import com.stardust.autojs.runtime.api.ConsoleExtension
 import com.stardust.autojs.runtime.api.Events
-import com.stardust.autojs.runtime.api.GoogleMLKit
 import com.stardust.autojs.runtime.api.Keyboard
-import com.stardust.autojs.runtime.api.Paddle
 import com.stardust.autojs.runtime.api.Plugins
 import com.stardust.autojs.runtime.api.ScriptShell
 import com.stardust.autojs.runtime.api.Sensors
@@ -54,10 +51,6 @@ class ScriptRuntimeV2(val builder: Builder) : ScriptRuntime(builder) {
 
     val termux = TermuxApi(uiHandler.context)
 
-    val gmlkit: GoogleMLKit = GoogleMLKit()
-
-    val paddle: Paddle = Paddle()
-
     @ScriptVariable
     val plugins: Plugins = Plugins(uiHandler.context, this)
 
@@ -66,9 +59,6 @@ class ScriptRuntimeV2(val builder: Builder) : ScriptRuntime(builder) {
 
     @ScriptVariable
     val automator = SimpleActionAutomator(accessibilityBridge) { Handler(loopers.servantLooper) }
-
-    @ScriptVariable
-    val onnx: OnnxModule = OnnxModule(this)
 
     init {
         automator.setScreenMetrics(mScreenMetrics)

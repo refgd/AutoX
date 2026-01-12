@@ -17,7 +17,7 @@ import androidx.core.content.edit
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.fragment.app.Fragment
-import com.aiselp.autox.utils.dataStore
+import com.stardust.autojs.util.dataStore
 import com.stardust.toast
 import com.stardust.util.IntentUtil
 import kotlinx.coroutines.flow.first

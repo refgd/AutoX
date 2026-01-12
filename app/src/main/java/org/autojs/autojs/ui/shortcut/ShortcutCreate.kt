@@ -38,7 +38,7 @@ import androidx.lifecycle.lifecycleScope
 import com.aiselp.autox.ui.material3.components.BaseDialog
 import com.aiselp.autox.ui.material3.components.ComposeDialog
 import com.aiselp.autox.ui.material3.components.DialogTitle
-import com.aiselp.autox.utils.setupStartIntent
+import com.stardust.autojs.util.setupStartIntent
 import com.stardust.autojs.execution.ScriptExecuteActivity
 import com.stardust.autojs.script.JavaScriptSource
 import kotlinx.coroutines.Dispatchers

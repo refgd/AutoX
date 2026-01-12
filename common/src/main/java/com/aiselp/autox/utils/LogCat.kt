@@ -1,4 +1,4 @@
-package com.aiselp.autox.utils
+package com.stardust.autojs.util
 
 import org.apache.commons.exec.CommandLine
 import org.apache.commons.exec.DefaultExecutor

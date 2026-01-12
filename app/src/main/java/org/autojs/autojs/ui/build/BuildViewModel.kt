@@ -84,7 +84,6 @@ class BuildViewModel(private val app: Application, private var source: String) :
     //文件
     var sourcePath by mutableStateOf("")
     var outputPath by mutableStateOf("")
-//    var customOcrModelPath by mutableStateOf("")
 
 
     //配置
@@ -100,20 +99,11 @@ class BuildViewModel(private val app: Application, private var source: String) :
     var abiList by mutableStateOf(
         Constant.Abi.abis.joinToString(", ")
     )
-    var useNodejs: Boolean by mutableStateOf(false)
 
     //--so
     var isRequiredOpenCv by mutableStateOf(false)
-    var isRequiredPaddleOCR by mutableStateOf(false)
-    var isRequiredTesseractOCR by mutableStateOf(false)
     var isRequired7Zip by mutableStateOf(false)
     var isRequiredTerminalEmulator by mutableStateOf(true)
-
-    //--assets
-    var isRequiredDefaultOcrModelData by mutableStateOf(false)
-
-    //--so and assets
-    var isRequiredMlKitOCR by mutableStateOf(false)
 
     //运行配置
     var mainScriptFile by mutableStateOf("main.js")
@@ -288,7 +278,6 @@ class BuildViewModel(private val app: Application, private var source: String) :
                 permissions = updatePermissions()
                 isHideAccessibilityServices = viewModel.isHideAccessibilityServices
             }
-            useNodejs = viewModel.useNodejs
             SigningConfig(
                 keyStore = viewModel.keyStore?.path,
                 alias = viewModel.keyStore?.alias,
@@ -326,7 +315,6 @@ class BuildViewModel(private val app: Application, private var source: String) :
         splashIcon = projectConfig.launchConfig.splashIcon?.let {
             getUri(it)
         }
-        useNodejs = projectConfig.useNodejs
 
         val signConfig = projectConfig.signingConfig
         v1Sign = signConfig.v1Sign
@@ -355,22 +343,6 @@ class BuildViewModel(private val app: Application, private var source: String) :
 
     private fun updateAssets(oldAsset: List<Asset>): List<Asset> {
         val assetsList = oldAsset.toMutableList()
-        if (isRequiredDefaultOcrModelData) {
-            assetsList.addIfNotExist(
-                Asset(
-                    form = Constant.Protocol.ASSETS + Constant.Assets.PADDLE_OCR,
-                    to = Constant.Assets.PADDLE_OCR
-                )
-            )
-        }
-        if (isRequiredMlKitOCR) {
-            assetsList.addIfNotExist(
-                Asset(
-                    form = Constant.Protocol.ASSETS + Constant.Assets.GOOGLE_ML_KIT_OCR,
-                    to = Constant.Assets.GOOGLE_ML_KIT_OCR
-                )
-            )
-        }
         if (!isSingleFile) {
             assetsList.addIfNotExist(
                 Asset(
@@ -392,9 +364,6 @@ class BuildViewModel(private val app: Application, private var source: String) :
     private fun updateLibs(): MutableList<String> {
         val libs = mutableListOf<String>()
         if (isRequiredOpenCv) libs.addAll(Constant.Libraries.OPEN_CV)
-        if (isRequiredPaddleOCR) libs.addAll(Constant.Libraries.PADDLE_OCR)
-        if (isRequiredMlKitOCR) libs.addAll(Constant.Libraries.GOOGLE_ML_KIT_OCR)
-        if (isRequiredTesseractOCR) libs.addAll(Constant.Libraries.TESSERACT_OCR)
         if (isRequired7Zip) libs.addAll(Constant.Libraries.P7ZIP)
         if (isRequiredTerminalEmulator) libs.addAll(Constant.Libraries.TERMINAL_EMULATOR)
         return libs
@@ -428,24 +397,10 @@ class BuildViewModel(private val app: Application, private var source: String) :
     }
 
     private fun setAssetsAndLibs(projectConfig: ProjectConfig) {
-        var isRequiredMlKitOCRLibs = false
-        var isRequiredMlKitOCRModels = false
         projectConfig.libs.let {
-            isRequiredMlKitOCRLibs = it.containsAll(Constant.Libraries.GOOGLE_ML_KIT_OCR)
-            isRequiredPaddleOCR = it.containsAll(Constant.Libraries.PADDLE_OCR)
-            isRequiredTesseractOCR = it.containsAll(Constant.Libraries.TESSERACT_OCR)
             isRequired7Zip = it.containsAll(Constant.Libraries.P7ZIP)
             isRequiredOpenCv = it.containsAll(Constant.Libraries.OPEN_CV)
         }
-        projectConfig.assets.forEach {
-            if (it.form == "${Constant.Protocol.ASSETS}${Constant.Assets.GOOGLE_ML_KIT_OCR}") {
-                isRequiredMlKitOCRModels = true
-            }
-            if (it.form == "${Constant.Protocol.ASSETS}${Constant.Assets.PADDLE_OCR}") {
-                isRequiredDefaultOcrModelData = true
-            }
-        }
-        isRequiredMlKitOCR = isRequiredMlKitOCRLibs && isRequiredMlKitOCRModels
     }
 
     private fun setPermissions(projectConfig: ProjectConfig) {

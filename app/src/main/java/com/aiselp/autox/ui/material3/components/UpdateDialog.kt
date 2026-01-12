@@ -22,7 +22,7 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.datastore.preferences.core.edit
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.aiselp.autox.DataStoreKey
-import com.aiselp.autox.utils.dataStore
+import com.stardust.autojs.util.dataStore
 import com.stardust.toast
 import com.stardust.util.ClipboardUtil
 import io.noties.markwon.Markwon

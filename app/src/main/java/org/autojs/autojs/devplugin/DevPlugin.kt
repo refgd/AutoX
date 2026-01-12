@@ -358,8 +358,8 @@ object DevPlugin {
                 type = "log",
                 data = LogData(log = log)
             )
-            runBlocking {
-                session.send(gson.toJson(data))
+            CoroutineScope(Dispatchers.IO).launch {
+                kotlin.runCatching { session.send(gson.toJson(data)) }
             }
         }
 

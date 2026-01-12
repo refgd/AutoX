@@ -7,7 +7,7 @@ $files.create(testDir);
 $files.create(outDir);
 $files.write(testDir + "/1.txt", "Hello, World");
 $files.write(testDir + "/2.txt", "GoodBye, World");
-$files.write(testDir + "/3.txt", "Autox.js");
+$files.write(testDir + "/3.txt", "AutoR.js");
 
 // 1. 压缩文件夹
 // 要压缩的文件夹路径
@@ -22,7 +22,7 @@ console.assert(File(zipFile).isFile())
 let encryptedZipFile = outDir + '/加密.zip';
 $files.remove(encryptedZipFile);
 $zip.zipDir(dir, encryptedZipFile, {
-    password: 'Autox.js'
+    password: 'AutoR.js'
 });
 console.assert(File(encryptedZipFile).isFile())
 
@@ -45,7 +45,7 @@ console.assert($files.read(outDir + '/未加密/zip_test/1.txt') == 'Hello, Worl
 
 // 6. 解压加密的zip
 $zip.unzip(outDir + '/加密.zip', outDir + '/加密/', {
-    password: 'Autox.js'
+    password: 'AutoR.js'
 });
 console.assert($files.read(outDir + '/加密/zip_test/2.txt') == 'GoodBye, World')
 

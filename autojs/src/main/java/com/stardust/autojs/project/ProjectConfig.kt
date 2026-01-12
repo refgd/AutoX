@@ -32,7 +32,6 @@ data class ProjectConfig(
     var features: ArrayList<String> = arrayListOf(),
     @Ignore
     var sourcePath: String? = null,
-    var useNodejs: Boolean = false,
     @Ignore
     var projectDirectory: String? = null,
     var outputPath: String? = null,

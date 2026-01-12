@@ -244,15 +244,6 @@ class ApkBuilder(
         config.abis.forEach { abi ->
             val abiDir = File(nativePath, abi)
             if (!abiDir.isDirectory) return@forEach
-            if (config.useNodejs) {
-                abiDir.list()?.find {
-                    it.startsWith("libjavet-")
-                }?.let {
-                    File(abiDir, it).copyTo(
-                        File(workspacePath, "lib/$abi/$it"), true
-                    )
-                }
-            }
             config.libs.forEach { name ->
                 kotlin.runCatching {
                     File(abiDir, name).copyTo(

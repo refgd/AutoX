@@ -14,9 +14,7 @@ appcompat = "1.7.0"
 material = "1.12.0"
 quickie-bundled = "1.10.0"
 savedstate = "1.2.1"
-mlkit-text = "16.0.1"
 junit-ktx = "1.2.1"
-mlkit-common-version = "18.11.0"
 
 [libraries]
 # androidx
@@ -87,20 +85,13 @@ ktor-server-websockets = { module = "io.ktor:ktor-server-websockets", version.re
 ktor-client-websockets = { module = "io.ktor:ktor-client-websockets", version.ref = "ktor-version" }
 ktor-client-okhttp = { module = "io.ktor:ktor-client-okhttp", version.ref = "ktor-version" }
 ktor-client-core = { module = "io.ktor:ktor-client-core", version.ref = "ktor-version" }
-# mlkit
-mlkit-common = { group = "com.google.mlkit", name = "common", version.ref = "mlkit-common-version" }
-mlkit-text-recognition = { module = "com.google.mlkit:text-recognition", version.ref = "mlkit-text" }
-mlkit-text-recognition-chinese = { module = "com.google.mlkit:text-recognition-chinese", version.ref = "mlkit-text" }
-mlkit-text-recognition-devanagari = { module = "com.google.mlkit:text-recognition-devanagari", version.ref = "mlkit-text" }
-mlkit-text-recognition-japanese = { module = "com.google.mlkit:text-recognition-japanese", version.ref = "mlkit-text" }
-mlkit-text-recognition-korean = { module = "com.google.mlkit:text-recognition-korean", version.ref = "mlkit-text" }
+
 #rxjava
 quickie-bundled = { module = "io.github.g00fy2.quickie:quickie-bundled", version.ref = "quickie-bundled" }
 rxjava2 = "io.reactivex.rxjava2:rxjava:2.2.21"
 rxjava2-rxandroid = "io.reactivex.rxjava2:rxandroid:2.1.1"
 rxjava3 = "io.reactivex.rxjava3:rxjava:3.1.11"
 rxjava3-rxandroid = "io.reactivex.rxjava3:rxandroid:3.0.2"
-javet-android-node = "com.caoccao.javet:javet-node-android:5.0.2"
 #shizuku
 shizuku-api = "dev.rikka.shizuku:api:13.1.5"
 shizuku-provider = "dev.rikka.shizuku:provider:13.1.5"
@@ -135,11 +126,4 @@ glide-compiler = "com.github.bumptech.glide:compiler:4.12.0"
 
 [bundles]
 ktor = ["ktor-server-core", "ktor-server-netty", "ktor-server-websockets", "ktor-client-websockets", "ktor-client-okhttp", "ktor-client-core"]
-mlkit = [
-    "mlkit-text-recognition",
-    "mlkit-text-recognition-chinese",
-    "mlkit-text-recognition-devanagari",
-    "mlkit-text-recognition-japanese",
-    "mlkit-text-recognition-korean"
-]
 shizuku = ["shizuku-api", "shizuku-provider"]

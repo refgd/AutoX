@@ -278,25 +278,8 @@ private fun PackagingOptionCard(model: BuildViewModel) {
             onValueChange = { model.abiList = it },
             label = stringResource(R.string.text_abi)
         )
-        CheckboxOption(model::useNodejs, "启用nodejs引擎")
         CheckboxOption(model::isRequiredOpenCv, stringResource(R.string.text_required_opencv))
-        CheckboxOption(
-            model::isRequiredMlKitOCR,
-            stringResource(R.string.text_required_google_mlkit_ocr)
-        )
-        CheckboxOption(
-            model::isRequiredPaddleOCR,
-            stringResource(R.string.text_required_paddle_ocr)
-        )
-        CheckboxOption(
-            model::isRequiredTesseractOCR,
-            stringResource(R.string.text_required_tesseract_ocr)
-        )
         CheckboxOption(model::isRequired7Zip, stringResource(R.string.text_required_7zip))
-        CheckboxOption(
-            model::isRequiredDefaultOcrModelData,
-            stringResource(R.string.text_required_default_paddle_ocr_model)
-        )
     }
 }
 

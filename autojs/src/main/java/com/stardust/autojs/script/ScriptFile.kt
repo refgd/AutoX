@@ -1,6 +1,5 @@
 package com.stardust.autojs.script
 
-import com.aiselp.autox.engine.NodeScriptSource
 import com.stardust.pio.PFile
 import java.io.File
 
@@ -12,18 +11,14 @@ open class ScriptFile : PFile {
 
     val type: Int by lazy {
         name.let {
-            if (it.endsWith("node.js")) TYPE_NODE_SCRIPT
-            else if (it.endsWith(".js")) TYPE_JAVA_SCRIPT
+            if (it.endsWith(".js")) TYPE_JAVA_SCRIPT
             else if (it.endsWith(".auto")) TYPE_AUTO
-            else if (it.endsWith(".mjs")) TYPE_NODE_SCRIPT
-            else if (it.endsWith(".cjs")) TYPE_NODE_SCRIPT
             else TYPE_UNKNOWN
         }
     }
 
     open fun toSource(): ScriptSource = when (type) {
         TYPE_JAVA_SCRIPT -> JavaScriptFileSource(this)
-        TYPE_NODE_SCRIPT -> NodeScriptSource(this)
         else -> AutoFileSource(this)
     }
 

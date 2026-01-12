@@ -59,7 +59,6 @@ dependencies {
     implementation(libs.glide)
     implementation(libs.documentfile)
     implementation(libs.preference.ktx)
-    implementation(libs.javet.android.node)
     api(libs.rxjava3.rxandroid)
 
     api(libs.ktsh)
@@ -76,33 +75,13 @@ dependencies {
     api(project(path = ":common"))
     api(project(path = ":automator"))
     implementation("com.hzy:libp7zip:1.7.0")
-    api(project(":paddleocr"))
+    
     api(libs.mozilla.rhino)
     api(libs.mozilla.rhino.xml)
     api(libs.mozilla.rhino.tools)
     implementation(libs.opencv)
     // libs
     implementation(libs.byte.buddy.android)
-    implementation("cz.adaptech:tesseract4android:4.1.1")
-    implementation(libs.bundles.mlkit)
-    implementation("com.microsoft.onnxruntime:onnxruntime-android:1.22.0")
-}
-tasks.register<Exec>("buildV7Api") {
-    group = "build"
-    val v7ApiDir = File(projectDir, "src/main/js/v7-api")
-    val v7ModuleDir = File(projectDir, "src/main/assets/v7modules")
-    workingDir = v7ApiDir
-    execCommand("node build.mjs")
-    doLast {
-        copy {
-            delete(v7ModuleDir)
-            from(File(v7ApiDir, "dist"))
-            into(v7ModuleDir)
-        }
-        delete(fileTree(v7ModuleDir) {
-            include("**/*.ts")
-        })
-    }
 }
 
 tasks.register<Exec>("buildV6Api") {
@@ -125,5 +104,5 @@ tasks.register<Exec>("buildV6Api") {
 
 tasks.register("buildJsModule") {
     group = "build"
-    dependsOn("buildV6Api", "buildV7Api")
+    dependsOn("buildV6Api")
 }

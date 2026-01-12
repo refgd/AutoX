@@ -36,7 +36,6 @@ import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import androidx.lifecycle.lifecycleScope
 import androidx.preference.PreferenceManager
-import com.aiselp.autox.engine.NodeScriptEngine
 import com.aiselp.autox.ui.material3.theme.AppTheme
 import com.google.gson.Gson
 import com.stardust.auojs.inrt.autojs.AutoJs
@@ -140,15 +139,10 @@ class SplashActivity : AppCompatActivity() {
                     Pref.setStopAllScriptsWhenVolumeUp(it.isVolumeUpControl)
                     Pref.setDisplaySplash(it.displaySplash)
                 }
-
-            }
-            val initModuleResource = launch(Dispatchers.IO) {
-                NodeScriptEngine.initModuleResource(this@SplashActivity, appVersionChange)
             }
             if (projectConfig.launchConfig.displaySplash) {
                 delay(1000)
             }
-            initModuleResource.join()
             if (permissionCheck.checkPermission(
                     this@SplashActivity, projectConfig.launchConfig.permissions
                 )

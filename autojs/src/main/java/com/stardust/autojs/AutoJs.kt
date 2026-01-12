@@ -6,8 +6,6 @@ import android.app.Application
 import android.content.Context
 import android.os.Bundle
 import android.util.Log
-import com.aiselp.autox.engine.NodeScriptEngine
-import com.google.mlkit.common.MlKit
 import com.stardust.app.SimpleActivityLifecycleCallbacks
 import com.stardust.autojs.core.accessibility.AccessibilityBridge
 import com.stardust.autojs.core.activity.ActivityInfoProvider
@@ -61,7 +59,6 @@ abstract class AutoJs protected constructor(protected val application: Applicati
     init {
         ObjectWatcher.init(application)
         ScreenMetrics.initIfNeeded(application)
-        MlKit.initialize(application)
         ShizukuClient.instance.setupService(application.packageName, globalConsole)
         scriptEngineService = buildScriptEngineService()
         ScriptEngineService.instance = scriptEngineService
@@ -116,9 +113,6 @@ abstract class AutoJs protected constructor(protected val application: Applicati
         }
         initContextFactory()
         scriptEngineManager.registerEngine(AutoFileSource.ENGINE) { RootAutomatorEngine(mContext) }
-        scriptEngineManager.registerEngine(NodeScriptEngine.ID) {
-            NodeScriptEngine(mContext)
-        }
     }
 
     private fun initContextFactory() {

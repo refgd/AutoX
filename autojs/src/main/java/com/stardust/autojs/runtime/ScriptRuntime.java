@@ -251,7 +251,6 @@ public abstract class ScriptRuntime {
         ignoresException(sensors::unregisterAll);
         ignoresException(timers::recycle);
         ignoresException(ui::recycle);
-//        ignoresException(paddle::release);
     }
 
     private void ignoresException(Runnable r) {

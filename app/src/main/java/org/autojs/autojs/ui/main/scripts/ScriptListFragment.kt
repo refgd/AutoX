@@ -179,7 +179,6 @@ class ScriptListFragment : Fragment() {
         val dialog = remember { DialogController() }
         var name by remember { mutableStateOf("") }
         var jsFile by remember { mutableStateOf(false) }
-        var mjsFile by remember { mutableStateOf(false) }
 
         dialog.BaseDialog(onDismissRequest = { dialog.dismiss() }, title = {
             DialogTitle(title = stringResource(R.string.text_name))
@@ -193,7 +192,6 @@ class ScriptListFragment : Fragment() {
             if (dir != null) {
                 var fileName = name
                 if (jsFile) fileName += ".js"
-                if (mjsFile) fileName += ".mjs"
                 val file = File(dir, fileName)
                 PFiles.createIfNotExists(file.path)
                 Explorers.workspace()
@@ -210,31 +208,11 @@ class ScriptListFragment : Fragment() {
                     onValueChange = { name = it },
                     label = { Text(stringResource(R.string.text_please_input_name)) },
                     suffix = {
-                        if (jsFile || mjsFile) {
-                            Text(text = ".${if (jsFile) "js" else "mjs"}")
+                        if (jsFile) {
+                            Text(text = "js")
                         }
                     }
                 )
-                Row {
-                    CheckboxOption(
-                        modifier = Modifier,
-                        checked = jsFile,
-                        onCheckedChange = {
-                            jsFile = it
-                            if (it && mjsFile) mjsFile = false
-                        },
-                        name = stringResource(R.string.text_js_file)
-                    )
-                    CheckboxOption(
-                        modifier = Modifier,
-                        checked = mjsFile,
-                        onCheckedChange = {
-                            mjsFile = it
-                            if (it && jsFile) jsFile = false
-                        },
-                        name = stringResource(R.string.text_mjs_file)
-                    )
-                }
             }
         }
         ExtendedFloatingActionButton(text = { Text(text = stringResource(id = R.string.text_file)) },

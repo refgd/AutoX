@@ -12,7 +12,6 @@ interface IShizukuUserService {
      void recycleShell(int id) = 3;
      void setConsole(in IBinder listener) = 4;
 
-     void runNodeScript(String path) = 5;
      String runRhinoScript(String script) = 6;
      String runRhinoScriptFile(String path) = 7;
 

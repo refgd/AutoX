@@ -40,8 +40,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.core.content.FileProvider
 import com.aiselp.autox.ui.material3.theme.AppTheme
-import com.aiselp.autox.utils.DeviceInfo
-import com.aiselp.autox.utils.LogCat
+import com.stardust.autojs.util.DeviceInfo
+import com.stardust.autojs.util.LogCat
 import com.stardust.toast
 import java.io.File
 

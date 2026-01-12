@@ -4,5 +4,5 @@ plugins {
 }
 
 include(":app", ":automator", ":common", ":autojs", ":inrt", ":apkbuilder")
-include(":paddleocr")
+
 include(":codeeditor")

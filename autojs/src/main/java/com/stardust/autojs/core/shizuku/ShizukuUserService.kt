@@ -60,10 +60,6 @@ class ShizukuUserService : IShizukuUserService.Stub {
         rhinoEngineFactory.setAutojsConsole(console!!)
     }
 
-    override fun runNodeScript(path: String?) {
-        TODO("Not yet implemented")
-    }
-
     override fun runRhinoScript(script: String): String? {
         val rhinoEngine = rhinoEngineFactory.createRhinoEngine()
         val resultReceiver = RhinoEngine.ResultReceiver()

@@ -110,22 +110,22 @@ android {
             buildConfigField("String", "CHANNEL", "\"common\"")
             manifestPlaceholders.putAll(mapOf("appName" to "@string/app_name"))
         }
-        create("v7") {
-            applicationIdSuffix = ".v7"
+        create("v6") {
+            applicationIdSuffix = ".r.v6"
             versionCode = versions.devVersionCode
             versionName = versions.devVersionName
-            buildConfigField("String", "CHANNEL", "\"v7\"")
-            manifestPlaceholders.putAll(mapOf("appName" to "Autox.js v7"))
+            buildConfigField("String", "CHANNEL", "\"v6\"")
+            manifestPlaceholders.putAll(mapOf("appName" to "AutoR.js"))
         }
-        create("v7_mini") {
-            applicationIdSuffix = ".v7"
-            buildConfigField("String", "CHANNEL", "\"v7\"")
-            manifestPlaceholders.putAll(mapOf("appName" to "Autox.js v7"))
+        create("v6_mini") {
+            applicationIdSuffix = ".r.v6"
+            buildConfigField("String", "CHANNEL", "\"v6\"")
+            manifestPlaceholders.putAll(mapOf("appName" to "AutoR.js"))
         }
     }
     applicationVariants.all {
         val variant = this
-        if (variant.flavorName == "v7_mini") {
+        if (variant.flavorName == "v6_mini") {
             mergeAssetsProvider.configure {
                 doLast {
                     delete(
@@ -171,8 +171,7 @@ dependencies {
 
     implementation(libs.compose.ui)
     implementation(libs.compose.ui.tooling.preview)
-    implementation(libs.mlkit.common)
-    androidTestImplementation(libs.compose.ui.test.junit4)
+    
     debugImplementation(libs.compose.ui.tooling)
     implementation(libs.activity.compose)
 
@@ -292,49 +291,5 @@ tasks.register("buildDebugTemplateApp") {
 tasks.named("clean").configure {
     doFirst {
         delete(File(assetsDir, "template.apk"))
-    }
-}
-tasks.register("buildDocs") {
-    group = "build"
-    doLast {
-        val v2DocDir = File(rootProject.projectDir, "docs/v2")
-        val jsApiDir = File(rootProject.projectDir, "autojs/src/main/js/v7-api")
-        if (!v2DocDir.isDirectory) {
-            logger.error("run command: `git submodule update --init --recursive` install docs/v2")
-            throw FileNotFoundException("${v2DocDir.path} not found")
-        }
-        val buildFile = File.createTempFile("buildJs", ".mjs")
-        exec {
-            workingDir(jsApiDir)
-            buildFile.writeText(
-                """
-                import { execSync } from 'child_process'
-                execSync('npm install', { stdio: 'inherit' })
-                execSync('npm run docs', { stdio: 'inherit' })
-            """.trimIndent()
-            )
-            execCommand("node " + buildFile.path)
-        }
-        copy {
-            from(File(jsApiDir, "docs"))
-            delete(File(v2DocDir, "docs/nodejs/modules"))
-            into(File(v2DocDir, "docs/nodejs/modules"))
-        }
-        exec {
-            workingDir(v2DocDir)
-            buildFile.writeText(
-                """
-                import { execSync } from 'child_process'
-                execSync('npm install', { stdio: 'inherit' })
-                execSync('npm run build', { stdio: 'inherit' })
-            """.trimIndent()
-            )
-            execCommand("node " + buildFile.path)
-        }
-        copy {
-            from(File(v2DocDir, "build"))
-            into(File(projectDir, "src/main/assets/docs/v2"))
-        }
-        buildFile.delete()
     }
 }

@@ -18,7 +18,6 @@ import _dialogs from './dialogs'
 import _$cypto from './inline_modules/$crypto'
 import _$zip from './inline_modules/$zip'
 import _events from './inline_modules/events'
-import _paddle from './inline_modules/paddle'
 import _plugins from './inline_modules/plugins'
 import _sensors from './inline_modules/sensors'
 import * as _web from './inline_modules/web'
@@ -43,7 +42,6 @@ declare global {
     var $crypto: typeof _$cypto
     var $zip: typeof _$zip
     var events: typeof _events
-    var paddle: typeof _paddle
     var plugins: typeof _plugins
     var sensors: typeof _sensors
     var web: typeof _web
@@ -65,7 +63,6 @@ setGlobalAnd$({
     http: _http,
     dialogs: _dialogs,
     events: _events,
-    paddle: _paddle,
     plugins: _plugins,
     sensors: _sensors,
     web: _web

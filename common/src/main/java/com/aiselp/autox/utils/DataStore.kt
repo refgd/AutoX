@@ -1,4 +1,4 @@
-package com.aiselp.autox.utils
+package com.stardust.autojs.util
 
 import android.content.Context
 import androidx.datastore.core.DataStore

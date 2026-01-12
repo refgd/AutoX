@@ -3,8 +3,7 @@ package org.autojs.autojs.ui.log
 import android.content.Context
 import android.content.Intent
 import android.os.Bundle
-import com.aiselp.autox.engine.NodeScriptSource
-import com.aiselp.autox.utils.loadScriptTask
+import com.stardust.autojs.util.loadScriptTask
 import com.stardust.autojs.script.JavaScriptFileSource
 import com.stardust.autojs.servicecomponents.EngineController
 
@@ -16,7 +15,6 @@ class LogActivityKt : LogActivity() {
             val source = task.source
             val file = when (source) {
                 is JavaScriptFileSource -> source.file
-                is NodeScriptSource -> source.file
                 else -> null
             }
             if (file != null) {

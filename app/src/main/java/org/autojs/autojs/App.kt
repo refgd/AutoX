@@ -13,9 +13,7 @@ import androidx.core.content.edit
 import androidx.core.os.LocaleListCompat
 import androidx.localbroadcastmanager.content.LocalBroadcastManager
 import androidx.work.Configuration
-import com.aiselp.autox.engine.NodeScriptEngine.Companion.initModuleResource
 import com.aiselp.autox.ui.material3.activity.ErrorReportActivity
-import com.google.mlkit.common.MlKit
 import com.stardust.app.GlobalAppContext
 import com.stardust.autojs.core.pref.PrefKey
 import com.stardust.autojs.servicecomponents.EngineController
@@ -85,7 +83,6 @@ class App : Application(), Configuration.Provider {
                 delay(1000)
                 ShizukuProvider.requestBinderForNonProviderProcess(this@App)
             }
-            MlKit.initialize(this)
         }
         Log.i(
             TAG, "Pid: ${Process.myPid()}, isScriptProcess: ${ProcessUtils.isScriptProcess(this)}"
@@ -113,7 +110,6 @@ class App : Application(), Configuration.Provider {
         val appVersionChange =
             Pref.def().getInt(getString(R.string.key_init_resource), 0) != BuildConfig.VERSION_CODE
         Thread {
-            initModuleResource(this, appVersionChange)
             if (appVersionChange) {
                 Pref.def().edit(commit = true) {
                     putInt(getString(R.string.key_init_resource), BuildConfig.VERSION_CODE)

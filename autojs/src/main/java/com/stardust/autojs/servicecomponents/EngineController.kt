@@ -1,6 +1,5 @@
 package com.stardust.autojs.servicecomponents
 
-import com.aiselp.autox.engine.NodeScriptEngine
 import com.stardust.autojs.AutoJs
 import com.stardust.autojs.execution.ExecutionConfig
 import com.stardust.autojs.project.ProjectConfig
@@ -84,10 +83,7 @@ object EngineController {
         config: ExecutionConfig? = null
     ) {
         scope.launch {
-            val engineName = when (file.extension) {
-                "mjs" -> NodeScriptEngine.ID
-                else -> JavaScriptSource.ENGINE
-            }
+            val engineName = JavaScriptSource.ENGINE
             runScript(object : TaskInfo {
                 override val id: Int = 0
                 override val name: String = file.name
