@@ -110,7 +110,7 @@ class Images(
     fun save(image: ImageWrapper, path: String?, format: String, quality: Int): Boolean {
         val compressFormat = parseImageFormat(format)
             ?: throw IllegalArgumentException("unknown format $format")
-        val bitmap = image.bitmap
+        val bitmap = image.getBitmap()
         val outputStream = FileOutputStream(mScriptRuntime.files.path(path))
         return outputStream.use { out ->
             val compress = bitmap.compress(compressFormat, quality, out)
@@ -124,11 +124,11 @@ class Images(
         matrix.postRotate(degree, x, y)
         return ImageWrapper.ofBitmap(
             Bitmap.createBitmap(
-                img.bitmap,
+                img.getBitmap(),
                 0,
                 0,
-                img.width,
-                img.height,
+                img.getWidth(),
+                img.getHeight(),
                 matrix,
                 true
             )
@@ -136,7 +136,7 @@ class Images(
     }
 
     fun clip(img: ImageWrapper, x: Int, y: Int, w: Int, h: Int): ImageWrapper? {
-        return ImageWrapper.ofBitmap(Bitmap.createBitmap(img.bitmap, x, y, w, h))
+        return ImageWrapper.ofBitmap(Bitmap.createBitmap(img.getBitmap(), x, y, w, h))
     }
 
     fun read(path: String): ImageWrapper? {
@@ -155,7 +155,7 @@ class Images(
     fun toBytes(wrapper: ImageWrapper, format: String, quality: Int): ByteArray {
         val compressFormat = parseImageFormat(format)
             ?: throw IllegalArgumentException("unknown format $format")
-        val bitmap = wrapper.bitmap
+        val bitmap = wrapper.getBitmap()
         val outputStream = ByteArrayOutputStream()
         bitmap.compress(compressFormat, quality, outputStream)
         return outputStream.toByteArray()
@@ -215,12 +215,12 @@ class Images(
         initOpenCvIfNeeded()
         if (image == null) throw NullPointerException("image = null")
         if (template == null) throw NullPointerException("template = null")
-        var src = image.mat
+        var src = image.getMat()
         if (rect != null) {
             src = Mat(src, rect)
         }
         val point = TemplateMatching.fastTemplateMatching(
-            src, template.mat, TemplateMatching.MATCHING_METHOD_DEFAULT,
+            src, template.getMat(), TemplateMatching.MATCHING_METHOD_DEFAULT,
             weakThreshold, threshold, maxLevel, transparentMask
         )
         if (point != null) {
@@ -231,7 +231,7 @@ class Images(
             point.x = mScreenMetrics.scaleX(point.x.toInt()).toDouble()
             point.y = mScreenMetrics.scaleX(point.y.toInt()).toDouble()
         }
-        if (src !== image.mat) {
+        if (src !== image.getMat()) {
             OpenCVHelper.release(src)
         }
         return point
@@ -251,13 +251,13 @@ class Images(
         initOpenCvIfNeeded()
         if (image == null) throw NullPointerException("image = null")
         if (template == null) throw NullPointerException("template = null")
-        var src = image.mat
+        var src = image.getMat()
         if (rect != null) {
             src = Mat(src, rect)
         }
 
         val result = TemplateMatching.fastTemplateMatching(
-            src, template.mat, Imgproc.TM_CCOEFF_NORMED,
+            src, template.getMat(), Imgproc.TM_CCOEFF_NORMED,
             weakThreshold, threshold, maxLevel, limit, transparentMask
         )
         for (match in result) {
@@ -269,7 +269,7 @@ class Images(
             point.x = mScreenMetrics.scaleX(point.x.toInt()).toDouble()
             point.y = mScreenMetrics.scaleX(point.y.toInt()).toDouble()
         }
-        if (src !== image.mat) {
+        if (src !== image.getMat()) {
             OpenCVHelper.release(src)
         }
         return result
@@ -321,29 +321,29 @@ class Images(
             img2 = tmp
         }
         if (direction == Gravity.LEFT || direction == Gravity.RIGHT) {
-            width = img1.width + img2.width
-            height = Math.max(img1.height, img2.height)
+            width = img1.getWidth() + img2.getWidth()
+            height = Math.max(img1.getHeight(), img2.getHeight())
         } else {
-            width = Math.max(img1.width, img2.width)
-            height = img1.height + img2.height
+            width = Math.max(img1.getWidth(), img2.getWidth())
+            height = img1.getHeight() + img2.getHeight()
         }
         val bitmap = createBitmap(width, height)
         val canvas = Canvas(bitmap)
         val paint = Paint()
         if (direction == Gravity.LEFT || direction == Gravity.RIGHT) {
-            canvas.drawBitmap(img1.bitmap, 0f, ((height - img1.height) / 2).toFloat(), paint)
+            canvas.drawBitmap(img1.getBitmap(), 0f, ((height - img1.getHeight()) / 2).toFloat(), paint)
             canvas.drawBitmap(
-                img2.bitmap,
-                img1.width.toFloat(),
-                ((height - img2.height) / 2).toFloat(),
+                img2.getBitmap(),
+                img1.getWidth().toFloat(),
+                ((height - img2.getHeight()) / 2).toFloat(),
                 paint
             )
         } else {
-            canvas.drawBitmap(img1.bitmap, ((width - img1.width) / 2).toFloat(), 0f, paint)
+            canvas.drawBitmap(img1.getBitmap(), ((width - img1.getWidth()) / 2).toFloat(), 0f, paint)
             canvas.drawBitmap(
-                img2.bitmap,
-                ((width - img2.width) / 2).toFloat(),
-                img1.height.toFloat(),
+                img2.getBitmap(),
+                ((width - img2.getWidth()) / 2).toFloat(),
+                img1.getHeight().toFloat(),
                 paint
             )
         }

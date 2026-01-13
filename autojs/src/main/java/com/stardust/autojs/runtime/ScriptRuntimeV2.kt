@@ -2,6 +2,7 @@ package com.stardust.autojs.runtime
 
 import android.os.Handler
 import com.github.aiselp.autox.api.TermuxApi
+import com.refgd.autojs.core.image.TinyOcr
 import com.stardust.autojs.ScriptEngineService
 import com.stardust.autojs.annotation.ScriptInterface
 import com.stardust.autojs.annotation.ScriptVariable
@@ -56,6 +57,9 @@ class ScriptRuntimeV2(val builder: Builder) : ScriptRuntime(builder) {
 
     @ScriptVariable
     var zips: SevenZip = SevenZip()
+
+    @ScriptVariable
+    val tinyOcr: TinyOcr = TinyOcr
 
     @ScriptVariable
     val automator = SimpleActionAutomator(accessibilityBridge) { Handler(loopers.servantLooper) }

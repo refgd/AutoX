@@ -53,7 +53,7 @@ class SimpleActionAutomator(
                 override fun onSuccess(screenshot: AccessibilityService.ScreenshotResult) {
                     val bitmap =
                         Bitmap.wrapHardwareBuffer(screenshot.hardwareBuffer, screenshot.colorSpace)
-                    val imageWrapper = ImageWrapper.ofBitmap(bitmap)
+                    val imageWrapper = bitmap?.let { ImageWrapper.ofBitmap(it) }
                     callback?.invoke(imageWrapper, 0)
                 }
 
