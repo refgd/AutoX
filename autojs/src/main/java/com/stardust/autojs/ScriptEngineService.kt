@@ -21,38 +21,64 @@ import com.stardust.autojs.script.JavaScriptSource
 import com.stardust.autojs.script.ScriptSource
 import com.stardust.lang.ThreadCompat
 import com.stardust.util.UiHandler
+import io.reactivex.rxjava3.disposables.Disposable
 import io.reactivex.rxjava3.subjects.PublishSubject
+import java.util.concurrent.ConcurrentHashMap
 
 /**
  * Created by Stardust on 2017/1/23.
  */
 class ScriptEngineService internal constructor(builder: ScriptEngineServiceBuilder) {
+
     private val mUiHandler: UiHandler = builder.mUiHandler
     private val mContext: Context = mUiHandler.context
     val globalConsole: Console = builder.mGlobalConsole
     private val mScriptEngineManager: ScriptEngineManager = builder.mScriptEngineManager
+
+    // 并发安全：脚本线程/回调线程/UI线程都可能访问
+    private val mScriptExecutions = ConcurrentHashMap<Int, ScriptExecution>()
+
     private val mEngineLifecycleObserver: EngineLifecycleObserver =
         object : EngineLifecycleObserver() {
             override fun onEngineRemove(engine: ScriptEngine<*>?) {
-                mScriptExecutions.remove(engine!!.id)
+                engine?.let { mScriptExecutions.remove(it.id) }
                 super.onEngineRemove(engine)
             }
         }
+
     private val mScriptExecutionObserver = ScriptExecutionObserver()
-    private val mScriptExecutions = LinkedHashMap<Int, ScriptExecution>()
-    private val disposable = executionEventPublish.subscribe { event ->
-        if (event.code == ScriptExecutionEvent.ON_START) {
-            globalConsole.verbose(mContext.getString(R.string.text_start_running) + "[" + event.message + "]")
-        } else if (event.code == ScriptExecutionEvent.ON_EXCEPTION) {
-            mUiHandler.toast(mContext.getString(R.string.text_error) + ": " + event.message)
+
+    private val disposable: Disposable = executionEventPublish.subscribe { event ->
+        when (event.code) {
+            ScriptExecutionEvent.ON_START -> {
+                globalConsole.verbose(
+                    mContext.getString(R.string.text_start_running) + "[" + event.message + "]"
+                )
+            }
+
+            ScriptExecutionEvent.ON_EXCEPTION -> {
+                mUiHandler.toast(mContext.getString(R.string.text_error) + ": " + event.message)
+            }
         }
     }
 
     init {
         mScriptEngineManager.setEngineLifecycleCallback(mEngineLifecycleObserver)
         mScriptExecutionObserver.registerScriptExecutionListener(GLOBAL_LISTENER)
-        mScriptEngineManager.putGlobal("context", mUiHandler.context)
-        ScriptRuntime.setApplicationContext(builder.mUiHandler.context.applicationContext)
+
+        // context 建议使用 applicationContext，避免意外泄漏
+        mScriptEngineManager.putGlobal("context", mContext.applicationContext)
+        ScriptRuntime.setApplicationContext(mContext.applicationContext)
+    }
+
+    /**
+     * 建议在你有“重启引擎/重启服务”的路径里调用一次，避免重复订阅泄漏
+     */
+    fun destroy() {
+        try {
+            disposable.dispose()
+        } catch (_: Throwable) {
+        }
     }
 
     fun registerEngineLifecycleCallback(engineLifecycleCallback: EngineLifecycleCallback) {
@@ -98,11 +124,10 @@ class ScriptEngineService internal constructor(builder: ScriptEngineServiceBuild
                 return ScriptExecuteActivity.ActivityScriptExecution(mScriptEngineManager, task)
             }
         }
-        val scriptExecution: RunnableScriptExecution = when (source) {
+        return when (source) {
             is JavaScriptSource -> LoopedBasedJavaScriptExecution(mScriptEngineManager, task)
             else -> RunnableScriptExecution(mScriptEngineManager, task)
         }
-        return scriptExecution
     }
 
     fun startScriptExecution(scriptExecution: ScriptExecution) {
@@ -113,7 +138,7 @@ class ScriptEngineService internal constructor(builder: ScriptEngineServiceBuild
         }
     }
 
-    //脚本启动入口
+    // 脚本启动入口
     private fun executeInternal(task: ScriptExecutionTask): ScriptExecution {
         setupExecutionTaskListener(task)
         val execution = createScriptExecution(task)
@@ -149,44 +174,38 @@ class ScriptEngineService internal constructor(builder: ScriptEngineServiceBuild
 
     val engines: Set<ScriptEngine<*>>
         get() = mScriptEngineManager.engines
+
     val scriptExecutions: Collection<ScriptExecution>
         get() = mScriptExecutions.values
 
     fun getScriptExecution(id: Int): ScriptExecution? {
-        return if (id == ScriptExecution.NO_ID) {
-            null
-        } else mScriptExecutions[id]
+        return if (id == ScriptExecution.NO_ID) null else mScriptExecutions[id]
     }
 
     private open class EngineLifecycleObserver : EngineLifecycleCallback {
-        private val mEngineLifecycleCallbacks: MutableSet<EngineLifecycleCallback> = LinkedHashSet()
+        private val callbacks = LinkedHashSet<EngineLifecycleCallback>()
+        private val lock = Any()
+
         override fun onEngineCreate(engine: ScriptEngine<*>?) {
-            synchronized(mEngineLifecycleCallbacks) {
-                for (callback in mEngineLifecycleCallbacks) {
-                    callback.onEngineCreate(engine)
-                }
-            }
+            val snapshot = synchronized(lock) { callbacks.toList() }
+            for (cb in snapshot) cb.onEngineCreate(engine)
         }
 
         override fun onEngineRemove(engine: ScriptEngine<*>?) {
-            synchronized(mEngineLifecycleCallbacks) {
-                for (callback in mEngineLifecycleCallbacks) {
-                    callback.onEngineRemove(engine)
-                }
-            }
+            val snapshot = synchronized(lock) { callbacks.toList() }
+            for (cb in snapshot) cb.onEngineRemove(engine)
         }
 
         fun registerCallback(callback: EngineLifecycleCallback) {
-            synchronized(mEngineLifecycleCallbacks) { mEngineLifecycleCallbacks.add(callback) }
+            synchronized(lock) { callbacks.add(callback) }
         }
 
         fun unregisterCallback(callback: EngineLifecycleCallback) {
-            synchronized(mEngineLifecycleCallbacks) { mEngineLifecycleCallbacks.remove(callback) }
+            synchronized(lock) { callbacks.remove(callback) }
         }
     }
 
     class ScriptExecutionEvent internal constructor(val code: Int, val message: String) {
-
         companion object {
             const val ON_START = 1001
             const val ON_SUCCESS = 1002
@@ -196,7 +215,10 @@ class ScriptEngineService internal constructor(builder: ScriptEngineServiceBuild
 
     companion object {
         private const val LOG_TAG = "ScriptEngineService"
+
+        // 仍保持静态 Subject（不改外部行为），但实例必须可 dispose，且 instance setter 幂等
         private val executionEventPublish = PublishSubject.create<ScriptExecutionEvent>()
+
         private val GLOBAL_LISTENER: ScriptExecutionListener =
             object : ScriptExecutionListener {
                 override fun onStart(execution: ScriptExecution) {
@@ -219,10 +241,14 @@ class ScriptEngineService internal constructor(builder: ScriptEngineServiceBuild
                     onFinish(execution)
                 }
 
-                private fun onFinish(execution: ScriptExecution?) {}
+                private fun onFinish(execution: ScriptExecution?) {
+                    // no-op (保持原逻辑)
+                }
+
                 override fun onException(execution: ScriptExecution, e: Throwable) {
                     Log.e(LOG_TAG, e.stackTraceToString())
                     onFinish(execution)
+
                     var message: String? = null
                     val engine = execution.engine
                     if (!ScriptInterruptedException.causedByInterrupted(e)) {
@@ -248,13 +274,18 @@ class ScriptEngineService internal constructor(builder: ScriptEngineServiceBuild
                     }
                 }
             }
+
+        @Volatile
         private var sInstance: ScriptEngineService? = null
 
         @JvmStatic
         var instance: ScriptEngineService?
             get() = sInstance
             set(service) {
-                check(sInstance == null)
+                if (sInstance != null) {
+                    Log.w(LOG_TAG, "ScriptEngineService.instance already set; ignoring new instance.")
+                    return
+                }
                 sInstance = service
             }
     }

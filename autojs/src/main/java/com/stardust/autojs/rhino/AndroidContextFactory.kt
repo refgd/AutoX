@@ -18,6 +18,7 @@ import java.util.concurrent.atomic.AtomicInteger
  * Created by Stardust on 2017/4/5.
  */
 open class AndroidContextFactory(private val cacheDirectory: File) : ContextFactory() {
+
     companion object {
         const val LOG_TAG = "ContextFactory"
         val bridges = ScriptBridges()
@@ -38,20 +39,15 @@ open class AndroidContextFactory(private val cacheDirectory: File) : ContextFact
         initApplicationClassLoader(createClassLoader(AndroidContextFactory::class.java.classLoader!!))
     }
 
-    /**
-     * Create a ClassLoader which is able to deal with bytecode
-     *
-     * @param parent the parent of the create classloader
-     * @return a new ClassLoader
-     */
     final override fun createClassLoader(parent: ClassLoader): AndroidClassLoader {
         return AndroidClassLoader(parent, cacheDirectory)
     }
 
     override fun observeInstructionCount(cx: Context, instructionCount: Int) {
-        if (Thread.currentThread().isInterrupted && Looper.myLooper() != Looper.getMainLooper()) {
-            throw ScriptInterruptedException()
-        }
+        if (!Thread.currentThread().isInterrupted) return
+        val looper = Looper.myLooper()
+        if (looper != null && looper == Looper.getMainLooper()) return
+        throw ScriptInterruptedException()
     }
 
     override fun makeContext(): Context {
@@ -81,10 +77,10 @@ open class AndroidContextFactory(private val cacheDirectory: File) : ContextFact
     }
 
     override fun hasFeature(cx: Context?, featureIndex: Int): Boolean {
-        when (featureIndex) {
-            Context.FEATURE_ENABLE_XML_SECURE_PARSING -> return false
+        return when (featureIndex) {
+            Context.FEATURE_ENABLE_XML_SECURE_PARSING -> false
+            else -> super.hasFeature(cx, featureIndex)
         }
-        return super.hasFeature(cx, featureIndex)
     }
 
     open class WrapFactory : org.mozilla.javascript.WrapFactory() {

@@ -42,6 +42,7 @@ import java.io.File
  * Created by Stardust on 2017/11/29.
  */
 abstract class AutoJs protected constructor(protected val application: Application) {
+
     private val mContext: Context = application.applicationContext
     private val accessibilityActionRecorder = AccessibilityActionRecorder()
     private val mNotificationObserver: AccessibilityNotificationObserver =
@@ -59,11 +60,18 @@ abstract class AutoJs protected constructor(protected val application: Applicati
     init {
         ObjectWatcher.init(application)
         ScreenMetrics.initIfNeeded(application)
+
+        // 确保 globalConsole 在 init 阶段就 ready（避免未来改动引起的 lazy 竞态）
+        val consoleInit = globalConsole
+
         ShizukuClient.instance.setupService(application.packageName, globalConsole)
+
         scriptEngineService = buildScriptEngineService()
         ScriptEngineService.instance = scriptEngineService
+
         addAccessibilityServiceDelegates()
         registerActivityLifecycleCallbacks()
+
         ResourceMonitor.setExceptionCreator { resource: ResourceMonitor.Resource? ->
             val exception: Exception =
                 if (org.mozilla.javascript.Context.getCurrentContext() != null) {
@@ -96,6 +104,7 @@ abstract class AutoJs protected constructor(protected val application: Applicati
     var debugEnabled = false
 
     abstract fun ensureAccessibilityServiceEnabled()
+
     private fun buildScriptEngineService(): ScriptEngineService {
         initScriptEngineManager()
         return ScriptEngineServiceBuilder()
@@ -115,8 +124,16 @@ abstract class AutoJs protected constructor(protected val application: Applicati
         scriptEngineManager.registerEngine(AutoFileSource.ENGINE) { RootAutomatorEngine(mContext) }
     }
 
+    /**
+     * Rhino 的 global ContextFactory 只能 init 一次；多进程/重复初始化时容忍并忽略。
+     */
     private fun initContextFactory() {
-        ContextFactory.initGlobal(AndroidContextFactory(File(mContext.cacheDir, "classes")))
+        val factory = AndroidContextFactory(File(mContext.cacheDir, "classes"))
+        try {
+            ContextFactory.initGlobal(factory)
+        } catch (e: IllegalStateException) {
+            Log.w("AutoJs", "ContextFactory already initialized, ignore.", e)
+        }
     }
 
     protected open fun createRuntime(): ScriptRuntimeV2 {
@@ -136,16 +153,22 @@ abstract class AutoJs protected constructor(protected val application: Applicati
 
     private fun registerActivityLifecycleCallbacks() {
         application.registerActivityLifecycleCallbacks(object : SimpleActivityLifecycleCallbacks() {
-            override fun onActivityCreated(activity: Activity, savedInstanceState: Bundle?) {
+            override fun onActivityResumed(activity: Activity) {
                 appUtils.currentActivity = activity
+            }
+
+            override fun onActivityDestroyed(activity: Activity) {
+                if (appUtils.currentActivity === activity) {
+                    appUtils.currentActivity = null
+                }
+            }
+
+            override fun onActivityCreated(activity: Activity, savedInstanceState: Bundle?) {
+                // no-op
             }
 
             override fun onActivityPaused(activity: Activity) {
-                appUtils.currentActivity = null
-            }
-
-            override fun onActivityResumed(activity: Activity) {
-                appUtils.currentActivity = activity
+                // 不在 pause 时置空，避免 A->B 切换瞬间抖动为 null
             }
         })
     }
@@ -157,6 +180,7 @@ abstract class AutoJs protected constructor(protected val application: Applicati
     }
 
     abstract fun waitForAccessibilityServiceEnabled()
+
     protected open fun createAccessibilityConfig(): AccessibilityConfig? {
         return AccessibilityConfig()
     }
@@ -179,7 +203,6 @@ abstract class AutoJs protected constructor(protected val application: Applicati
             return this@AutoJs.infoProvider
         }
 
-
         override fun getNotificationObserver(): AccessibilityNotificationObserver {
             return mNotificationObserver
         }
@@ -187,6 +210,13 @@ abstract class AutoJs protected constructor(protected val application: Applicati
 
     companion object {
         @SuppressLint("StaticFieldLeak")
-        lateinit var instance: AutoJs
+        @Volatile
+        private var _instance: AutoJs? = null
+
+        @JvmStatic
+        var instance: AutoJs
+            get() = _instance ?: throw IllegalStateException("AutoJs is not initialized")
+            set(value) { _instance = value }
     }
+
 }

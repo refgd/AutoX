@@ -6,31 +6,39 @@ import com.stardust.autojs.engine.ScriptEngineFactory.EngineNotFoundException
 import com.stardust.autojs.execution.ScriptExecution
 import com.stardust.autojs.script.ScriptSource
 import com.stardust.util.Supplier
+import java.util.concurrent.ConcurrentHashMap
 
 /**
  * Created by Stardust on 2017/1/27.
  */
 class ScriptEngineManager(val androidContext: Context) {
+
     interface EngineLifecycleCallback {
         fun onEngineCreate(engine: ScriptEngine<*>?)
         fun onEngineRemove(engine: ScriptEngine<*>?)
     }
 
+    private val enginesLock = Any()
     private val mEngines: MutableSet<ScriptEngine<*>> = HashSet()
+
+    @Volatile
     private var mEngineLifecycleCallback: EngineLifecycleCallback? = null
-    private val mEngineSuppliers: MutableMap<String, Supplier<ScriptEngine<*>>> = HashMap()
-    private val mGlobalVariableMap: MutableMap<String, Any> = HashMap()
+
+    private val mEngineSuppliers: MutableMap<String, Supplier<ScriptEngine<*>>> = ConcurrentHashMap()
+    private val mGlobalVariableMap: MutableMap<String, Any> = ConcurrentHashMap()
+
     private val mOnEngineDestroyListener = object : OnDestroyListener {
         override fun onDestroy(engine: ScriptEngine<*>) = removeEngine(engine)
     }
 
     private fun addEngine(engine: ScriptEngine<*>) {
         engine.setOnDestroyListener(mOnEngineDestroyListener)
-        synchronized(mEngines) {
-            mEngines.add(engine)
-            if (mEngineLifecycleCallback != null) {
-                mEngineLifecycleCallback!!.onEngineCreate(engine)
-            }
+
+        val cb = mEngineLifecycleCallback
+        val added: Boolean = synchronized(enginesLock) { mEngines.add(engine) }
+
+        if (added && cb != null) {
+            cb.onEngineCreate(engine)
         }
     }
 
@@ -39,24 +47,22 @@ class ScriptEngineManager(val androidContext: Context) {
     }
 
     val engines: Set<ScriptEngine<*>>
-        get() = mEngines
+        get() = synchronized(enginesLock) { mEngines.toSet() }
 
     fun removeEngine(engine: ScriptEngine<*>) {
-        synchronized(mEngines) {
-            if (mEngines.remove(engine) && mEngineLifecycleCallback != null) {
-                mEngineLifecycleCallback!!.onEngineRemove(engine)
-            }
+        val cb = mEngineLifecycleCallback
+        val removed: Boolean = synchronized(enginesLock) { mEngines.remove(engine) }
+        if (removed && cb != null) {
+            cb.onEngineRemove(engine)
         }
     }
 
     fun stopAll(): Int {
-        synchronized(mEngines) {
-            val n = mEngines.size
-            for (engine in mEngines) {
-                engine.forceStop()
-            }
-            return n
+        val snapshot: List<ScriptEngine<*>> = synchronized(enginesLock) { mEngines.toList() }
+        for (engine in snapshot) {
+            engine.forceStop()
         }
+        return snapshot.size
     }
 
     fun putGlobal(varName: String, value: Any) {
@@ -70,8 +76,8 @@ class ScriptEngineManager(val androidContext: Context) {
     }
 
     fun createEngine(name: String, id: Int): ScriptEngine<*>? {
-        val s = mEngineSuppliers[name] ?: return null
-        val engine = s.get()
+        val supplier = mEngineSuppliers[name] ?: return null
+        val engine = supplier.get()
         engine.id = id
         putProperties(engine)
         addEngine(engine)

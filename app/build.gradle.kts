@@ -108,7 +108,7 @@ android {
             versionCode = versions.appVersionCode
             versionName = versions.appVersionName
             buildConfigField("String", "CHANNEL", "\"common\"")
-            manifestPlaceholders.putAll(mapOf("appName" to "@string/app_name"))
+            manifestPlaceholders.putAll(mapOf("appName" to "AutoR.js Debug"))
         }
         create("v6") {
             applicationIdSuffix = ".r.v6"

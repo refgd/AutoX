@@ -16,27 +16,24 @@ import com.stardust.view.accessibility.AccessibilityService
 import com.stardust.view.accessibility.AccessibilityServiceUtils
 import org.autojs.autoxjs.inrt.R
 
-
 /**
  * Created by Stardust on 2017/4/2.
  */
-
 class AutoJs private constructor(application: Application) :
     com.stardust.autojs.AutoJs(application) {
 
     init {
-        scriptEngineService.registerGlobalScriptExecutionListener(ScriptExecutionGlobalListener())
+        // 避免每次 init 都 new 一个 listener 导致重复注册
+        scriptEngineService.registerGlobalScriptExecutionListener(GLOBAL_EXECUTION_LISTENER)
     }
 
     override fun createAppUtils(context: Context): AppUtils {
         return AppUtils(context, context.packageName + ".fileprovider")
     }
 
-
     override fun ensureAccessibilityServiceEnabled() {
-        if (AccessibilityService.instance != null) {
-            return
-        }
+        if (AccessibilityService.instance != null) return
+
         var errorMessage: String? = null
         if (AccessibilityServiceUtils.isAccessibilityServiceEnabled(
                 application,
@@ -59,6 +56,7 @@ class AutoJs private constructor(application: Application) :
                 errorMessage = GlobalAppContext.getString(R.string.text_no_accessibility_permission)
             }
         }
+
         if (errorMessage != null) {
             AccessibilityServiceTool.goToAccessibilitySetting()
             throw ScriptException(errorMessage)
@@ -66,9 +64,8 @@ class AutoJs private constructor(application: Application) :
     }
 
     override fun waitForAccessibilityServiceEnabled() {
-        if (AccessibilityService.instance != null) {
-            return
-        }
+        if (AccessibilityService.instance != null) return
+
         var errorMessage: String? = null
         if (AccessibilityServiceUtils.isAccessibilityServiceEnabled(
                 application,
@@ -91,6 +88,7 @@ class AutoJs private constructor(application: Application) :
                 errorMessage = GlobalAppContext.getString(R.string.text_no_accessibility_permission)
             }
         }
+
         if (errorMessage != null) {
             AccessibilityServiceTool.goToAccessibilitySetting()
             if (!AccessibilityService.waitForEnabled(-1)) {
@@ -105,6 +103,7 @@ class AutoJs private constructor(application: Application) :
 
     override fun initScriptEngineManager() {
         super.initScriptEngineManager()
+        // 覆盖同名 ENGINE 的 supplier：ScriptEngineManager.registerEngine 是 put，会替换，不会叠加
         scriptEngineManager.registerEngine(JavaScriptSource.ENGINE) {
             val engine = XJavaScriptEngine(application)
             engine.runtime = createRuntime()
@@ -120,10 +119,24 @@ class AutoJs private constructor(application: Application) :
     }
 
     companion object {
+
+        // 让 listener 单例化，避免重复 init 时无限注册
+        private val GLOBAL_EXECUTION_LISTENER by lazy { ScriptExecutionGlobalListener() }
+
         val instance: com.stardust.autojs.AutoJs
             get() = com.stardust.autojs.AutoJs.instance
 
+        /**
+         * 幂等初始化：
+         * - 多次调用不会重复 new AutoJs
+         * - 避免重复注册 ScriptExecutionGlobalListener / 重复初始化 Rhino/Service 等
+         */
+        @JvmStatic
         fun initInstance(application: Application) {
+            // 如果已初始化则直接返回
+            val alreadyInit = runCatching { com.stardust.autojs.AutoJs.instance }.isSuccess
+            if (alreadyInit) return
+
             com.stardust.autojs.AutoJs.instance = AutoJs(application)
         }
     }
