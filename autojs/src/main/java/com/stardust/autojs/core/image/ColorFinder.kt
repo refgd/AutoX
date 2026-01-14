@@ -450,7 +450,11 @@ class ColorFinder(private val mScreenMetrics: ScreenMetrics) {
     ): Point? {
         val roiW = anchorRegion.width
         val roiH = anchorRegion.height
-        val roiRgba = image.getRgbaRoiBytes(anchorRegion)
+
+        // ✅ Use full RGBA (cached by ImageWrapper in your case)
+        val imgW = image.getWidth()
+        val imgH = image.getHeight()
+        val fullRgba = image.getRgbaBytes()
 
         // local detector cache (avoid repeated synchronized LRU access in hot path)
         val localDet = HashMap<Int, ColorDetector>(16)
@@ -478,7 +482,7 @@ class ColorFinder(private val mScreenMetrics: ScreenMetrics) {
                 .forEach { hardColors.add(it) }
         }
 
-        // anchor mask -> bytes
+        // anchor mask -> bytes (ROI size)
         val anchorMask = buildInRangeMask(image, anchorRegion, anchorColor, diffHard)
         val anchorBytes = ByteArrayPool.obtain(roiW * roiH)
         try {
@@ -487,7 +491,7 @@ class ColorFinder(private val mScreenMetrics: ScreenMetrics) {
             OpenCVHelper.release(anchorMask)
         }
 
-        // hard masks -> bytes (only for selected colors)
+        // hard masks -> bytes (ROI size, only selected colors)
         val maskBytesCache = HashMap<Int, ByteArray>(hardColors.size)
         try {
             for (c in hardColors) {
@@ -501,7 +505,7 @@ class ColorFinder(private val mScreenMetrics: ScreenMetrics) {
                 }
             }
 
-            // Determine scan order by direction (row-major)
+            // Determine scan order by direction (your existing mapping)
             val sp = scanParams(roiW, roiH, direction)
 
             var y = sp.yStart
@@ -515,7 +519,11 @@ class ColorFinder(private val mScreenMetrics: ScreenMetrics) {
                                 baseY = y,
                                 roiW = roiW,
                                 roiH = roiH,
-                                roiRgba = roiRgba,
+                                regionX = anchorRegion.x,
+                                regionY = anchorRegion.y,
+                                imgW = imgW,
+                                imgH = imgH,
+                                fullRgba = fullRgba,
                                 negatives = negatives,
                                 positives = positives,
                                 hardMaskBytes = maskBytesCache,
@@ -527,7 +535,7 @@ class ColorFinder(private val mScreenMetrics: ScreenMetrics) {
                             val anchorAbsY = anchorRegion.y + y
                             val firstAbsX = anchorAbsX - anchorDx
                             val firstAbsY = anchorAbsY - anchorDy
-                            if (firstAbsX in 0 until image.getWidth() && firstAbsY in 0 until image.getHeight()) {
+                            if (firstAbsX in 0 until imgW && firstAbsY in 0 until imgH) {
                                 return Point(firstAbsX.toDouble(), firstAbsY.toDouble())
                             }
                         }
@@ -547,6 +555,7 @@ class ColorFinder(private val mScreenMetrics: ScreenMetrics) {
             maskBytesCache.clear()
         }
     }
+
 
     /**
      * Direction mapping:
@@ -591,48 +600,62 @@ class ColorFinder(private val mScreenMetrics: ScreenMetrics) {
         baseY: Int,
         roiW: Int,
         roiH: Int,
-        roiRgba: ByteArray,
+        regionX: Int,
+        regionY: Int,
+        imgW: Int,
+        imgH: Int,
+        fullRgba: ByteArray,
         negatives: List<OffsetColor>,
         positives: List<OffsetColor>,
         hardMaskBytes: Map<Int, ByteArray>,
         localDet: HashMap<Int, ColorDetector>,
         diffSoft: Int
     ): Boolean {
+
+        fun inRoi(rx: Int, ry: Int): Boolean = (rx in 0 until roiW) && (ry in 0 until roiH)
+
         // negatives first
         for (o in negatives) {
-            val x = baseX + o.dx
-            val y = baseY + o.dy
-            if (x !in 0 until roiW || y !in 0 until roiH) return false
+            val rx = baseX + o.dx
+            val ry = baseY + o.dy
+
+            val ax = regionX + rx
+            val ay = regionY + ry
+            if (ax !in 0 until imgW || ay !in 0 until imgH) return false
 
             val mask = hardMaskBytes[o.color]
-            if (mask != null) {
-                val idx = y * roiW + x
+            if (mask != null && inRoi(rx, ry)) {
+                val idx = ry * roiW + rx
                 if ((mask[idx].toInt() and 0xFF) != 0) return false
             } else {
                 val det = localDet.getOrPut(o.color) { detectorRgbPlus(o.color, diffSoft) }
-                val r = readR(roiRgba, roiW, x, y)
-                val g = readG(roiRgba, roiW, x, y)
-                val b = readB(roiRgba, roiW, x, y)
+                val r = readR(fullRgba, imgW, ax, ay)
+                val g = readG(fullRgba, imgW, ax, ay)
+                val b = readB(fullRgba, imgW, ax, ay)
                 if (det.detectsColor(r, g, b)) return false
             }
         }
 
         // positives
         for (o in positives) {
-            val x = baseX + o.dx
-            val y = baseY + o.dy
-            if (x !in 0 until roiW || y !in 0 until roiH) return false
+            val rx = baseX + o.dx
+            val ry = baseY + o.dy
+
+            val ax = regionX + rx
+            val ay = regionY + ry
+            if (ax !in 0 until imgW || ay !in 0 until imgH) return false
 
             val mask = hardMaskBytes[o.color]
-            if (mask != null) {
-                val idx = y * roiW + x
+            if (mask != null && inRoi(rx, ry)) {
+                val idx = ry * roiW + rx
                 if ((mask[idx].toInt() and 0xFF) == 0) return false
+                // mask 过了仍建议继续做 soft 校验（你现在就是这么做的）
             }
 
             val det = localDet.getOrPut(o.color) { detectorRgbPlus(o.color, diffSoft) }
-            val r = readR(roiRgba, roiW, x, y)
-            val g = readG(roiRgba, roiW, x, y)
-            val b = readB(roiRgba, roiW, x, y)
+            val r = readR(fullRgba, imgW, ax, ay)
+            val g = readG(fullRgba, imgW, ax, ay)
+            val b = readB(fullRgba, imgW, ax, ay)
             if (!det.detectsColor(r, g, b)) return false
         }
 

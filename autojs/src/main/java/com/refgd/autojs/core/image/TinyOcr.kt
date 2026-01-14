@@ -7,7 +7,7 @@ import org.opencv.core.*
 import org.opencv.imgproc.Imgproc
 import java.io.ByteArrayOutputStream
 import java.util.ArrayList
-import java.util.Collections
+import java.util.Arrays
 import java.util.LinkedHashMap
 import kotlin.math.abs
 import kotlin.math.atan2
@@ -17,14 +17,33 @@ import kotlin.math.max
 import kotlin.math.min
 
 class TinyOcrEngine internal constructor(
-    labels: IntArray,
+    labels: Array<String>,
     hashes: Array<String>
 ) {
     // ----------------------------
-    // Config (internal constants)
+    // Config
     // ----------------------------
 
     private val dxCandidates = intArrayOf(-1, 0, 1)
+
+    // tiny blob thresholds for scaleHeight=13
+    private val tinyMaxW = 4
+    private val tinyMaxH = 6
+    private val tinyMaxArea = 14
+    private val tinyMergePadX = 1
+    private val tinyMergePadY = 8
+
+    // ----------------------------
+    // Reusable row buffer (instance-scoped)
+    // Engine 被丢弃后 buffer 也会被 GC 回收，无需手动卸载
+    // ----------------------------
+
+    private var rowBuf: ByteArray = ByteArray(0)
+
+    private fun ensureRowBuf(size: Int): ByteArray {
+        if (rowBuf.size < size) rowBuf = ByteArray(size)
+        return rowBuf
+    }
 
     // ----------------------------
     // Internal structures
@@ -44,13 +63,13 @@ class TinyOcrEngine internal constructor(
     )
 
     private class BitTemplate(
-        val label: Int,
+        val label: String,
         val lenBits: Int,
         val rows: LongArray
     )
 
     // ----------------------------
-    // 64-char dict for hash debug encode (compatible with your JS dicts)
+    // 64-char dict for debug hash encode/decode (Kotlin-native)
     // ----------------------------
 
     private val dict: CharArray = charArrayOf(
@@ -76,25 +95,49 @@ class TinyOcrEngine internal constructor(
 
     private val templates: List<BitTemplate> = run {
         require(labels.size == hashes.size) { "labels.size != hashes.size" }
+        if (labels.isEmpty()) return@run emptyList()
+
         val out = ArrayList<BitTemplate>(labels.size)
         for (i in labels.indices) {
-            val rows6 = decodeHashTo6bits(hashes[i]) // Array<IntArray> (each char -> 6bits)
-            val (lenBits, rowsBits) = rows6ToBitRows(rows6)
+            val (lenBits, rowsBits) = decodeHashToBitRows(hashes[i])
             out.add(BitTemplate(labels[i], lenBits, rowsBits))
         }
         out
     }
 
-    // Light index by (h,wCharCount) to reduce scanning; still works with bitrows
+    // Light index by (h,wCharCount) to reduce scanning
     private val templateIndex: Map<Long, List<BitTemplate>> = run {
-        val m = LinkedHashMap<Long, MutableList<BitTemplate>>()
+        if (templates.isEmpty()) return@run emptyMap()
+        val m = LinkedHashMap<Long, MutableList<BitTemplate>>(templates.size * 2)
         for (t in templates) {
             val h = t.rows.size
-            val wChars = ((t.lenBits + 5) / 6) // char count
-            val key = dimsKey(h, wChars)
-            m.getOrPut(key) { ArrayList() }.add(t)
+            val wChars = ((t.lenBits + 5) / 6)
+            m.getOrPut(dimsKey(h, wChars)) { ArrayList(8) }.add(t)
         }
         m
+    }
+
+    // Exact match index: (h,lenBits,rowsHash) -> templates
+    private data class ExactKey(val h: Int, val lenBits: Int, val rowsHash: Int)
+
+    private val exactBitsIndex: Map<ExactKey, List<BitTemplate>> = run {
+        if (templates.isEmpty()) return@run emptyMap()
+        val m = LinkedHashMap<ExactKey, MutableList<BitTemplate>>(templates.size * 2)
+        for (t in templates) {
+            val key = ExactKey(t.rows.size, t.lenBits, Arrays.hashCode(t.rows))
+            m.getOrPut(key) { ArrayList(1) }.add(t)
+        }
+        m
+    }
+
+    private fun findExactTemplate(g: BitGlyph): BitTemplate? {
+        if (templates.isEmpty()) return null
+        val key = ExactKey(g.rows.size, g.lenBits, Arrays.hashCode(g.rows))
+        val list = exactBitsIndex[key] ?: return null
+        for (t in list) {
+            if (t.lenBits == g.lenBits && t.rows.size == g.rows.size && Arrays.equals(t.rows, g.rows)) return t
+        }
+        return null
     }
 
     // ----------------------------
@@ -104,10 +147,10 @@ class TinyOcrEngine internal constructor(
     private fun glyphMap(
         x: Int, y: Int, w: Int, h: Int,
         hash: String,
-        label: Int?,
-        bestLabel: Int?,
+        label: String?,
+        bestLabel: String?,
         sim: Double?,
-        pngBase64: String? // NEW
+        pngBase64: String?
     ): Map<String, Any?> {
         val m = LinkedHashMap<String, Any?>(9)
         m["x"] = x
@@ -130,7 +173,7 @@ class TinyOcrEngine internal constructor(
     }
 
     // ----------------------------
-    // Public API (Map result)
+    // Public API
     // ----------------------------
 
     @JvmOverloads
@@ -150,7 +193,7 @@ class TinyOcrEngine internal constructor(
         autoRotateMinPoints: Int = 80,
         matchFactor: Double = 0.8,
         debugHash: Boolean = false,
-        debugPngBase64: Boolean = false // NEW
+        debugPngBase64: Boolean = false
     ): Map<String, Any?> {
         val glyphs = extractGlyphsLine(
             img, range, colorRgbaInt,
@@ -158,26 +201,47 @@ class TinyOcrEngine internal constructor(
             tolerance, revert,
             autoRotate, autoRotateMaxAbsDeg, autoRotateSampleStep, autoRotateMinPoints
         )
-        if (glyphs.isEmpty()) return resultMap(null, Collections.emptyList())
+        if (glyphs.isEmpty()) return resultMap(null, emptyList())
+
+        // allow empty templates
+        if (templates.isEmpty()) {
+            val outGlyphs = ArrayList<Map<String, Any?>>(glyphs.size)
+            for (g in glyphs) {
+                val h = if (debugHash) encodeBitGlyphToHash(g) else ""
+                val pngB64 = if (debugPngBase64) bitGlyphToPngBase64(g) else null
+                outGlyphs.add(glyphMap(g.x, g.y, g.w, g.h, h, null, null, null, pngB64))
+            }
+            return resultMap(null, outGlyphs)
+        }
 
         val outGlyphs = ArrayList<Map<String, Any?>>(glyphs.size)
-        val sb = StringBuilder(glyphs.size)
+        val sb = StringBuilder(glyphs.size * 2)
         var allMatched = true
 
         val targetLenBits = targetLenBitsFor(maxWidth)
         for (g in glyphs) {
+            val pngB64 = if (debugPngBase64) bitGlyphToPngBase64(g) else null
+
+            // exact bits hit first
+            val exact = findExactTemplate(g)
+            if (exact != null) {
+                sb.append(exact.label)
+                val hashStr = if (debugHash) encodeBitGlyphToHash(g) else ""
+                outGlyphs.add(glyphMap(g.x, g.y, g.w, g.h, hashStr, exact.label, exact.label, 0.0, pngB64))
+                continue
+            }
+
             val candidates = candidatesForGlyph(g, targetLenBits)
             val tpl = candidates.firstOrNull { isMatchBits(it, g, matchFactor, targetLenBits) }
 
-            val pngB64 = if (debugPngBase64) bitGlyphToPngBase64(g) else null
-
             if (tpl == null) {
                 allMatched = false
-                outGlyphs.add(glyphMap(g.x, g.y, g.w, g.h, encodeBitGlyphToHash(g), null, null, null, pngB64))
+                val h = if (debugHash) encodeBitGlyphToHash(g) else ""
+                outGlyphs.add(glyphMap(g.x, g.y, g.w, g.h, h, null, null, null, pngB64))
             } else {
                 sb.append(tpl.label)
                 val hashStr = if (debugHash) encodeBitGlyphToHash(g) else ""
-                outGlyphs.add(glyphMap(g.x, g.y, g.w, g.h, hashStr, tpl.label, null, null, pngB64))
+                outGlyphs.add(glyphMap(g.x, g.y, g.w, g.h, hashStr, tpl.label, tpl.label, null, pngB64))
             }
         }
 
@@ -201,7 +265,7 @@ class TinyOcrEngine internal constructor(
         autoRotateMinPoints: Int = 80,
         simThreshold: Double = 0.8,
         debugHash: Boolean = false,
-        debugPngBase64: Boolean = false // NEW
+        debugPngBase64: Boolean = false
     ): Map<String, Any?> {
         val glyphs = extractGlyphsLine(
             img, range, colorRgbaInt,
@@ -209,10 +273,21 @@ class TinyOcrEngine internal constructor(
             tolerance, revert,
             autoRotate, autoRotateMaxAbsDeg, autoRotateSampleStep, autoRotateMinPoints
         )
-        if (glyphs.isEmpty()) return resultMap(null, Collections.emptyList())
+        if (glyphs.isEmpty()) return resultMap(null, emptyList())
+
+        // allow empty templates
+        if (templates.isEmpty()) {
+            val outGlyphs = ArrayList<Map<String, Any?>>(glyphs.size)
+            for (g in glyphs) {
+                val h = if (debugHash) encodeBitGlyphToHash(g) else ""
+                val pngB64 = if (debugPngBase64) bitGlyphToPngBase64(g) else null
+                outGlyphs.add(glyphMap(g.x, g.y, g.w, g.h, h, null, null, null, pngB64))
+            }
+            return resultMap(null, outGlyphs)
+        }
 
         val outGlyphs = ArrayList<Map<String, Any?>>(glyphs.size)
-        val sb = StringBuilder(glyphs.size)
+        val sb = StringBuilder(glyphs.size * 2)
         var allMatched = true
 
         val targetLenBits = targetLenBitsFor(maxWidth)
@@ -220,8 +295,16 @@ class TinyOcrEngine internal constructor(
             val hashStr = if (debugHash) encodeBitGlyphToHash(g) else ""
             val pngB64 = if (debugPngBase64) bitGlyphToPngBase64(g) else null
 
+            // exact bits hit first
+            val exact = findExactTemplate(g)
+            if (exact != null) {
+                sb.append(exact.label)
+                outGlyphs.add(glyphMap(g.x, g.y, g.w, g.h, hashStr, exact.label, exact.label, 0.0, pngB64))
+                continue
+            }
+
             val candidates = candidatesForGlyph(g, targetLenBits)
-            var bestLabel: Int? = null
+            var bestLabel: String? = null
             var bestSim = 1.0
 
             for (tpl in candidates) {
@@ -245,13 +328,9 @@ class TinyOcrEngine internal constructor(
     }
 
     // ----------------------------
-    // Target width normalization (width centering)
+    // Matching helpers
     // ----------------------------
 
-    /**
-     * Use softMaxWidth = maxWidth + 2 as the normalization target (more stable).
-     * Convert pixel width to bit length directly (1px == 1 bit), but keep within [6..60].
-     */
     private fun targetLenBitsFor(maxWidth: Int): Int {
         val soft = if (maxWidth > 0) maxWidth + 2 else 12
         return soft.coerceIn(6, 60)
@@ -288,14 +367,12 @@ class TinyOcrEngine internal constructor(
         return java.lang.Long.bitCount((tplBits xor shifted) and m)
     }
 
-    // ----------------------------
-    // Candidate templates (index)
-    // ----------------------------
-
     private fun dimsKey(h: Int, wChars: Int): Long =
         (h.toLong() shl 32) or (wChars.toLong() and 0xffffffffL)
 
     private fun candidatesForGlyph(g: BitGlyph, targetLenBits: Int): List<BitTemplate> {
+        if (templates.isEmpty()) return emptyList()
+
         val h = g.rows.size
         val wChars = ((min(g.lenBits, targetLenBits) + 5) / 6)
         if (h <= 0 || wChars <= 0) return templates
@@ -310,10 +387,6 @@ class TinyOcrEngine internal constructor(
         }
         return if (out.isNotEmpty()) out else templates
     }
-
-    // ----------------------------
-    // Matching with: center width + dx shift (-1..+1)
-    // ----------------------------
 
     private fun isMatchBits(tpl: BitTemplate, g: BitGlyph, matchFactor: Double, targetLenBits: Int): Boolean {
         val maxH = max(tpl.rows.size, g.rows.size)
@@ -361,46 +434,71 @@ class TinyOcrEngine internal constructor(
     }
 
     // ----------------------------
-    // Decode legacy hashTable into bits (still supported)
+    // Decode hash -> (lenBits, rowsBits) with manual parsing
+    // Supports same encoding as encodeBitGlyphToHash()
     // ----------------------------
 
-    private fun decodeHashTo6bits(hash: String): Array<IntArray> {
-        val lines = hash.split('|')
-        return Array(lines.size) { y ->
-            val line = lines[y]
-            IntArray(line.length) { i ->
-                val c = line[i]
-                val v = if (c.code < 128) dictRev[c.code] else -1
-                require(v in 0..63) { "Invalid hash char '$c' in: $hash" }
-                v
+    private fun decodeHashToBitRows(hash: String): Pair<Int, LongArray> {
+        if (hash.isEmpty()) return 0 to LongArray(0)
+
+        var bars = 0
+        var firstRowChars = 0
+        var inFirstRow = true
+
+        for (i in hash.indices) {
+            val c = hash[i]
+            if (c == '|') {
+                bars++
+                inFirstRow = false
+            } else if (inFirstRow) {
+                firstRowChars++
             }
         }
-    }
 
-    private fun rows6ToBitRows(rows6: Array<IntArray>): Pair<Int, LongArray> {
-        val h = rows6.size
-        if (h == 0) return 0 to LongArray(0)
-        val lenBits = (rows6[0].size) * 6
-        val out = LongArray(h)
-        for (y in 0 until h) {
-            val row = rows6[y]
-            var bits = 0L
-            var pos = 0
-            for (v in row) {
-                for (k in 5 downTo 0) {
-                    if (((v shr k) and 1) != 0) {
-                        bits = bits or (1L shl pos)
-                    }
-                    pos++
+        val rowsCount = bars + 1
+        val lenBits = firstRowChars * 6
+        val rows = LongArray(rowsCount)
+
+        var rowIdx = 0
+        var bits = 0L
+        var pos = 0
+
+        for (i in hash.indices) {
+            val c = hash[i]
+            if (c == '|') {
+                // flush row
+                if (rowIdx >= rowsCount) {
+                    throw IllegalArgumentException("Malformed hash (too many '|'): $hash")
                 }
+                rows[rowIdx] = bits
+                rowIdx++
+                bits = 0L
+                pos = 0
+                continue
             }
-            out[y] = bits
+
+            val v = if (c.code < 128) dictRev[c.code] else -1
+            require(v in 0..63) { "Invalid hash char '$c' in: $hash" }
+
+            for (k in 0 until 6) {
+                if (((v shr k) and 1) != 0) bits = bits or (1L shl pos)
+                pos++
+            }
         }
-        return lenBits to out
+
+        // last row
+        if (rowIdx != rowsCount - 1) {
+            // 说明 '|' 数和解析出来的行数不一致（尾部 '|' 或其它异常）
+            // 这里给个明确错误，方便你定位数据
+            // 如果你希望容错，也可以改成：rows[rowIdx] = bits; return ...
+            throw IllegalArgumentException("Malformed hash (row count mismatch): $hash")
+        }
+        rows[rowIdx] = bits
+        return lenBits to rows
     }
 
     // ----------------------------
-    // Debug hash encode from bits (same dict, 6bit groups)
+    // Debug hash encode from bits (Kotlin-native)
     // ----------------------------
 
     private fun encodeBitGlyphToHash(g: BitGlyph): String {
@@ -415,8 +513,9 @@ class TinyOcrEngine internal constructor(
             val rowBits = g.rows[y] and m
             for (gi in 0 until groups) {
                 var v = 0
+                val base = gi * 6
                 for (k in 0 until 6) {
-                    val bitIdx = gi * 6 + k
+                    val bitIdx = base + k
                     val b = if (bitIdx < lenBits && ((rowBits ushr bitIdx) and 1L) != 0L) 1 else 0
                     v = v or (b shl k)
                 }
@@ -427,7 +526,7 @@ class TinyOcrEngine internal constructor(
     }
 
     // ----------------------------
-    // Debug PNG Base64 from bit glyph (no ImageWrapper, no recycle needed in JS)
+    // Debug PNG Base64 from bit glyph
     // ----------------------------
 
     private fun bitGlyphToPngBase64(g: BitGlyph): String {
@@ -442,7 +541,6 @@ class TinyOcrEngine internal constructor(
             val rowBits = g.rows[y] and mask
             for (x in 0 until w) {
                 val on = ((rowBits ushr x) and 1L) != 0L
-                // 白字黑底：on=白，否则黑
                 pixels[x] = if (on) 0xFFFFFFFF.toInt() else 0xFF000000.toInt()
             }
             bmp.setPixels(pixels, 0, w, 0, y, w, 1)
@@ -451,15 +549,18 @@ class TinyOcrEngine internal constructor(
         val baos = ByteArrayOutputStream()
         bmp.compress(Bitmap.CompressFormat.PNG, 100, baos)
         bmp.recycle()
-
         return Base64.encodeToString(baos.toByteArray(), Base64.NO_WRAP)
     }
 
     // ----------------------------
-    // Line bbox + projection segmentation
+    // Segmentation: line bbox + projection
+    // with CC-based tiny-blob extraction/merging
     // ----------------------------
 
-    private data class Affine6(val a: Double, val b: Double, val c: Double, val d: Double, val e: Double, val f: Double)
+    private data class Affine6(
+        val a: Double, val b: Double, val c: Double,
+        val d: Double, val e: Double, val f: Double
+    )
 
     private fun readAffine6(m: Mat): Affine6 {
         val v = DoubleArray(6)
@@ -471,15 +572,12 @@ class TinyOcrEngine internal constructor(
         val det = m.a * m.e - m.b * m.d
         if (kotlin.math.abs(det) < 1e-12) return null
         val invDet = 1.0 / det
-
-        val ia =  m.e * invDet
+        val ia = m.e * invDet
         val ib = -m.b * invDet
         val id = -m.d * invDet
-        val ie =  m.a * invDet
-
+        val ie = m.a * invDet
         val ic = -(ia * m.c + ib * m.f)
         val iff = -(id * m.c + ie * m.f)
-
         return Affine6(ia, ib, ic, id, ie, iff)
     }
 
@@ -575,61 +673,87 @@ class TinyOcrEngine internal constructor(
                     Imgproc.INTER_NEAREST
                 )
 
-                val colSums = columnSums(scaled)
+                val tinyClusters = findTinyClusters(scaled)
 
-                val maxCol = colSums.maxOrNull() ?: 0
-                val colThreshold = max(1, floor(maxCol * 0.20).toInt())
-                val maxGap = 2
+                val segMask = if (tinyClusters.isEmpty()) scaled else scaled.clone()
+                try {
+                    if (tinyClusters.isNotEmpty()) eraseClusters(segMask, tinyClusters)
 
-                val segments = splitByProjection(colSums, colThreshold, maxGap)
+                    val colSums = columnSums(segMask)
+                    val maxCol = colSums.maxOrNull() ?: 0
+                    val colThreshold = max(1, (maxCol * 0.20).toInt())
+                    val segments = splitByProjection(colSums, colThreshold, maxGap = 2)
 
-                val softMaxWidth = if (maxWidth > 0) (maxWidth + 2) else 0
-                val finalSegs = ArrayList<IntRange>(segments.size * 2)
-                for (seg in segments) {
-                    val wSeg = seg.last - seg.first + 1
-                    if (softMaxWidth > 0 && wSeg > softMaxWidth) {
-                        finalSegs.addAll(splitWideSegmentLimited(colSums, seg, colThreshold, softMaxWidth, minWidth))
-                    } else {
-                        finalSegs.add(seg)
-                    }
-                }
+                    val glyphs = ArrayList<BitGlyph>(segments.size + tinyClusters.size)
 
-                val glyphs = ArrayList<BitGlyph>(finalSegs.size)
-                for (seg in finalSegs) {
-                    val segW = seg.last - seg.first + 1
-                    if (segW < minWidth) continue
+                    val sx = line.width.toDouble() / newW.toDouble()
+                    val sy = line.height.toDouble() / scaleHeight.toDouble()
 
-                    val bitRows = extractBitRowsFromMask(scaled, seg.first, segW, scaleHeight)
+                    // main glyphs
+                    for (seg in segments) {
+                        val segW = seg.last - seg.first + 1
+                        if (segW < minWidth) continue
 
-                    val x0 = floor(seg.first.toDouble() * line.width / newW.toDouble()).toInt()
-                    val x1 = ceil((seg.last + 1).toDouble() * line.width / newW.toDouble()).toInt()
-                    val w0 = (x1 - x0).coerceAtLeast(1)
+                        val bitRows = extractBitRowsFromMask(segMask, seg.first, 0, segW, scaleHeight)
 
-                    val glyphRectInRot = Rect(line.x + x0, line.y, w0, line.height)
+                        val x0 = floor(seg.first * sx).toInt()
+                        val x1 = ceil((seg.last + 1) * sx).toInt()
+                        val w0 = (x1 - x0).coerceAtLeast(1)
 
-                    val glyphRectInRoi = if (invMat6 != null) {
-                        transformRectBBox(invMat6!!, glyphRectInRot)
-                    } else glyphRectInRot
+                        val glyphRectInRot = Rect(line.x + x0, line.y, w0, line.height)
+                        val glyphRectInRoi = if (invMat6 != null) transformRectBBox(invMat6!!, glyphRectInRot) else glyphRectInRot
 
-                    val clamped = rectSafe(glyphRectInRoi, safe.width, safe.height)
-                    if (clamped.width <= 0 || clamped.height <= 0) continue
+                        val clamped = rectSafe(glyphRectInRoi, safe.width, safe.height)
+                        if (clamped.width <= 0 || clamped.height <= 0) continue
+                        val absRect = Rect(baseX + clamped.x, baseY + clamped.y, clamped.width, clamped.height)
 
-                    val absRect = Rect(baseX + clamped.x, baseY + clamped.y, clamped.width, clamped.height)
-
-                    glyphs.add(
-                        BitGlyph(
-                            x = absRect.x,
-                            y = absRect.y,
-                            w = absRect.width,
-                            h = absRect.height,
-                            lenBits = segW.coerceAtMost(60),
-                            rows = bitRows
+                        glyphs.add(
+                            BitGlyph(
+                                absRect.x, absRect.y, absRect.width, absRect.height,
+                                segW.coerceAtMost(60),
+                                bitRows
+                            )
                         )
-                    )
-                }
+                    }
 
-                glyphs.sortWith(compareBy<BitGlyph> { it.y }.thenBy { it.x })
-                return glyphs
+                    // punctuation clusters (do not allocate sub-mat)
+                    if (tinyClusters.isNotEmpty()) {
+                        for (cr in tinyClusters) {
+                            val bw = cr.width.coerceAtLeast(1)
+                            val bh = cr.height.coerceAtLeast(1)
+
+                            val bitRows = extractBitRowsFromMask(scaled, cr.x, cr.y, bw, bh)
+
+                            val rx0 = floor(cr.x * sx).toInt()
+                            val rx1 = ceil((cr.x + cr.width) * sx).toInt()
+                            val ry0 = floor(cr.y * sy).toInt()
+                            val ry1 = ceil((cr.y + cr.height) * sy).toInt()
+
+                            val rw = (rx1 - rx0).coerceAtLeast(1)
+                            val rh = (ry1 - ry0).coerceAtLeast(1)
+
+                            val glyphRectInRot = Rect(line.x + rx0, line.y + ry0, rw, rh)
+                            val glyphRectInRoi = if (invMat6 != null) transformRectBBox(invMat6!!, glyphRectInRot) else glyphRectInRot
+
+                            val clamped = rectSafe(glyphRectInRoi, safe.width, safe.height)
+                            if (clamped.width <= 0 || clamped.height <= 0) continue
+                            val absRect = Rect(baseX + clamped.x, baseY + clamped.y, clamped.width, clamped.height)
+
+                            glyphs.add(
+                                BitGlyph(
+                                    absRect.x, absRect.y, absRect.width, absRect.height,
+                                    bw.coerceAtMost(60),
+                                    bitRows
+                                )
+                            )
+                        }
+                    }
+
+                    glyphs.sortWith(compareBy<BitGlyph> { it.x }.thenBy { it.y })
+                    return glyphs
+                } finally {
+                    if (segMask !== scaled) segMask.release()
+                }
             } finally {
                 lineMask.release()
                 scaled.release()
@@ -641,12 +765,150 @@ class TinyOcrEngine internal constructor(
         }
     }
 
+    // ----------------------------
+    // CC tiny blob detection + clustering
+    // ----------------------------
+
+    private fun findTinyClusters(mask13: Mat): List<Rect> {
+        val labels = Mat()
+        val stats = Mat()
+        val cents = Mat()
+        try {
+            val n = Imgproc.connectedComponentsWithStats(mask13, labels, stats, cents, 8, CvType.CV_32S)
+            if (n <= 1) return emptyList()
+
+            val tinyRects = ArrayList<Rect>(16)
+            for (i in 1 until n) {
+                val x = stats.get(i, Imgproc.CC_STAT_LEFT)[0].toInt()
+                val y = stats.get(i, Imgproc.CC_STAT_TOP)[0].toInt()
+                val w = stats.get(i, Imgproc.CC_STAT_WIDTH)[0].toInt()
+                val h = stats.get(i, Imgproc.CC_STAT_HEIGHT)[0].toInt()
+                val area = stats.get(i, Imgproc.CC_STAT_AREA)[0].toInt()
+
+                if (w <= 0 || h <= 0) continue
+                if (w <= tinyMaxW && h <= tinyMaxH && area <= tinyMaxArea) {
+                    tinyRects.add(Rect(x, y, w, h))
+                }
+            }
+            if (tinyRects.isEmpty()) return emptyList()
+            return mergeRects(tinyRects, tinyMergePadX, tinyMergePadY)
+        } finally {
+            labels.release()
+            stats.release()
+            cents.release()
+        }
+    }
+
+    private fun mergeRects(rects: List<Rect>, padX: Int, padY: Int): List<Rect> {
+        val out = ArrayList<Rect>()
+        val used = BooleanArray(rects.size)
+        for (i in rects.indices) {
+            if (used[i]) continue
+            var cur = rects[i]
+            used[i] = true
+
+            var changed = true
+            while (changed) {
+                changed = false
+                for (j in rects.indices) {
+                    if (used[j]) continue
+                    val r = rects[j]
+                    if (rectsNear(cur, r, padX, padY)) {
+                        cur = unionRect(cur, r)
+                        used[j] = true
+                        changed = true
+                    }
+                }
+            }
+            out.add(cur)
+        }
+        out.sortBy { it.x }
+        return out
+    }
+
+    private fun rectsNear(a: Rect, b: Rect, padX: Int, padY: Int): Boolean {
+        val ax0 = a.x - padX
+        val ay0 = a.y - padY
+        val ax1 = a.x + a.width + padX
+        val ay1 = a.y + a.height + padY
+
+        val bx0 = b.x
+        val by0 = b.y
+        val bx1 = b.x + b.width
+        val by1 = b.y + b.height
+
+        val interX = min(ax1, bx1) - max(ax0, bx0)
+        val interY = min(ay1, by1) - max(ay0, by0)
+        return interX > 0 && interY > 0
+    }
+
+    private fun unionRect(a: Rect, b: Rect): Rect {
+        val x0 = min(a.x, b.x)
+        val y0 = min(a.y, b.y)
+        val x1 = max(a.x + a.width, b.x + b.width)
+        val y1 = max(a.y + a.height, b.y + b.height)
+        return Rect(x0, y0, (x1 - x0).coerceAtLeast(1), (y1 - y0).coerceAtLeast(1))
+    }
+
+    private fun eraseClusters(mask13: Mat, clusters: List<Rect>) {
+        for (r in clusters) {
+            Imgproc.rectangle(mask13, r.tl(), r.br(), Scalar(0.0), Imgproc.FILLED)
+        }
+    }
+
+    // ----------------------------
+    // Projection split (with "zero column hard break")
+    // ----------------------------
+
+    private fun splitByProjection(colSums: IntArray, threshold: Int, maxGap: Int): List<IntRange> {
+        val n = colSums.size
+        val segs = ArrayList<IntRange>()
+
+        var x = 0
+        while (x < n) {
+            while (x < n && colSums[x] < threshold) x++
+            if (x >= n) break
+            val start = x
+
+            var lastInk = x
+            var gap = 0
+            x++
+
+            while (x < n) {
+                val v = colSums[x]
+
+                // hard split on fully empty column
+                if (v == 0) break
+
+                if (v >= threshold) {
+                    lastInk = x
+                    gap = 0
+                } else {
+                    gap++
+                    if (gap > maxGap) break
+                }
+                x++
+            }
+
+            val end = lastInk
+            if (end >= start) segs.add(start..end)
+
+            while (x < n && colSums[x] < threshold) x++
+        }
+
+        return segs
+    }
+
+    // ----------------------------
+    // Basic image helpers
+    // ----------------------------
+
     private fun findForegroundBBox(mask: Mat): Rect? {
         val h = mask.rows()
         val w = mask.cols()
         if (w <= 0 || h <= 0) return null
 
-        val row = ByteArray(w)
+        val row = ensureRowBuf(w)
         var minX = Int.MAX_VALUE
         var minY = Int.MAX_VALUE
         var maxX = Int.MIN_VALUE
@@ -674,7 +936,8 @@ class TinyOcrEngine internal constructor(
         val h = mask13.rows()
         val w = mask13.cols()
         val sums = IntArray(w)
-        val row = ByteArray(w)
+        val row = ensureRowBuf(w)
+
         for (y in 0 until h) {
             mask13.get(y, 0, row)
             for (x in 0 until w) {
@@ -684,134 +947,44 @@ class TinyOcrEngine internal constructor(
         return sums
     }
 
-    private fun splitByProjection(colSums: IntArray, threshold: Int, maxGap: Int): List<IntRange> {
-        val n = colSums.size
-        val segs = ArrayList<IntRange>()
-
-        var x = 0
-        while (x < n) {
-            while (x < n && colSums[x] < threshold) x++
-            if (x >= n) break
-            val start = x
-
-            var lastInk = x
-            var gap = 0
-            x++
-
-            while (x < n) {
-                if (colSums[x] >= threshold) {
-                    lastInk = x
-                    gap = 0
-                } else {
-                    gap++
-                    if (gap > maxGap) break
-                }
-                x++
-            }
-
-            val end = lastInk
-            if (end >= start) segs.add(start..end)
-        }
-
-        return segs
-    }
-
-    private fun splitWideSegmentLimited(
-        colSums: IntArray,
-        seg: IntRange,
-        threshold: Int,
-        softMaxWidth: Int,
-        minWidth: Int
-    ): List<IntRange> {
-        val width = seg.last - seg.first + 1
-        if (softMaxWidth <= 0 || width <= softMaxWidth) return listOf(seg)
-
-        val expectedParts = ceil(width.toDouble() / softMaxWidth.toDouble()).toInt().coerceAtLeast(1)
-        val maxParts = min(6, expectedParts)
-
-        val parts = ArrayList<IntRange>()
-        parts.add(seg)
-
-        var guard = 0
-        while (guard++ < 24) {
-            if (parts.size >= maxParts) break
-
-            var idx = -1
-            var bestW = -1
-            for (i in parts.indices) {
-                val w = parts[i].last - parts[i].first + 1
-                if (w > bestW) { bestW = w; idx = i }
-            }
-            if (idx < 0) break
-
-            val cur = parts.removeAt(idx)
-            val wCur = cur.last - cur.first + 1
-            if (wCur <= softMaxWidth) {
-                parts.add(cur)
-                break
-            }
-
-            val left = cur.first + minWidth
-            val right = cur.last - minWidth
-            if (left >= right) {
-                parts.add(cur)
-                break
-            }
-
-            var bestX = -1
-            var bestVal = Int.MAX_VALUE
-            for (x in left..right) {
-                val v = colSums[x]
-                if (v < bestVal) { bestVal = v; bestX = x }
-            }
-
-            val valleyOk =
-                bestX in (cur.first + 1)..(cur.last - 1) &&
-                        bestVal <= max(1, threshold)
-
-            if (!valleyOk) {
-                parts.add(cur)
-                break
-            }
-
-            val r1 = cur.first..bestX
-            val r2 = (bestX + 1)..cur.last
-            val w1 = r1.last - r1.first + 1
-            val w2 = r2.last - r2.first + 1
-            if (w1 < minWidth || w2 < minWidth) {
-                parts.add(cur)
-                break
-            }
-
-            parts.add(r1)
-            parts.add(r2)
-        }
-
-        parts.sortBy { it.first }
-        return parts
-    }
-
-    private fun extractBitRowsFromMask(mask: Mat, xStart: Int, width: Int, height: Int): LongArray {
+    /**
+     * Extract bits from a region [xStart,yStart,width,height] of mask (no sub-mat allocation).
+     * bit0 corresponds to region leftmost.
+     */
+    private fun extractBitRowsFromMask(mask: Mat, xStart: Int, yStart: Int, width: Int, height: Int): LongArray {
         val w = mask.cols()
         val h = mask.rows()
-        val len = width.coerceAtMost(60)
-        val rows = LongArray(height)
-        val rowBuf = ByteArray(w)
+        val len = width.coerceAtMost(60).coerceAtLeast(1)
+        val outH = height.coerceAtLeast(1)
+        val rows = LongArray(outH)
 
-        for (y in 0 until min(height, h)) {
-            mask.get(y, 0, rowBuf)
+        if (w <= 0 || h <= 0) return rows
+
+        val buf = ensureRowBuf(w)
+
+        val y0 = yStart.coerceAtLeast(0)
+        val yEnd = min(yStart + outH, h)
+
+        var outY = 0
+        var y = y0
+        while (y < yEnd && outY < outH) {
+            mask.get(y, 0, buf)
+
             var bits = 0L
-            var pos = 0
+            val x0 = xStart.coerceAtLeast(0)
             val xEnd = min(xStart + len, w)
-            var x = xStart
+
+            var pos = 0
+            var x = x0
             while (x < xEnd) {
-                if ((rowBuf[x].toInt() and 0xFF) != 0) {
-                    bits = bits or (1L shl pos)
-                }
+                if ((buf[x].toInt() and 0xFF) != 0) bits = bits or (1L shl pos)
                 pos++
                 x++
             }
-            rows[y] = bits
+
+            rows[outY] = bits
+            outY++
+            y++
         }
         return rows
     }
@@ -819,7 +992,7 @@ class TinyOcrEngine internal constructor(
     private fun thresholdInRangeRgba(srcRgba: Mat, rgbaInt: Int, tolerance: Int, revert: Boolean): Mat {
         val r = (rgbaInt shr 16) and 0xFF
         val g = (rgbaInt shr 8) and 0xFF
-        val b = (rgbaInt) and 0xFF
+        val b = rgbaInt and 0xFF
         fun clamp(v: Int) = v.coerceIn(0, 255)
 
         val lb = Scalar(clamp(r - tolerance).toDouble(), clamp(g - tolerance).toDouble(), clamp(b - tolerance).toDouble(), 0.0)
@@ -837,7 +1010,7 @@ class TinyOcrEngine internal constructor(
         if (w <= 0 || h <= 0) return 0.0
 
         val step = sampleStep.coerceAtLeast(1)
-        val row = ByteArray(w)
+        val row = ensureRowBuf(w)
 
         var n = 0L
         var sumX = 0.0
@@ -907,6 +1080,6 @@ class TinyOcrEngine internal constructor(
 
 object TinyOcr {
     @JvmStatic
-    fun compile(labels: IntArray, hashes: Array<String>): TinyOcrEngine =
+    fun compile(labels: Array<String>, hashes: Array<String>): TinyOcrEngine =
         TinyOcrEngine(labels, hashes)
 }
