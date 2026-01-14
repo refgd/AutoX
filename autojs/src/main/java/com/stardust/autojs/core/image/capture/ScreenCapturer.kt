@@ -10,7 +10,7 @@ import android.media.Image
 import android.media.ImageReader
 import android.media.projection.MediaProjection
 import android.os.Handler
-import android.os.Looper
+import android.os.HandlerThread
 import android.util.Log
 import com.stardust.autojs.core.image.ImageWrapper
 import com.stardust.util.ScreenMetrics
@@ -23,166 +23,176 @@ import kotlinx.coroutines.withTimeout
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicReference
 
-/**
- * Created by Stardust on 2017/5/17.
- * Improvedd by TonyJiangWJ(https://github.com/TonyJiangWJ).
- * From [TonyJiangWJ/Auto.js](https://github.com/TonyJiangWJ/Auto.js)
- */
 class ScreenCapturer(
     private val mediaProjection: MediaProjection,
     orientation: Int = 0,
     private val screenDensity: Int = ScreenMetrics.getDeviceScreenDensity(),
-    private val mHandler: Handler = Handler(Looper.getMainLooper())
 ) {
-    private var mVirtualDisplay: VirtualDisplay
-    private var mImageReader: ImageReader
+    private var virtualDisplay: VirtualDisplay
+    private var imageReader: ImageReader
+
+    private val imageThread = HandlerThread("ScreenCapturer-Image").apply { start() }
+    private val imageHandler = Handler(imageThread.looper)
     private val executor = Executors.newSingleThreadExecutor()
 
     private val cachedImageBitmap = AtomicReference<Bitmap?>()
-    private val latestImage = AtomicReference<Image>()
+    private val latestImage = AtomicReference<Image?>()
     private val publishSubject = PublishSubject.create<ImageWrapper>()
 
     @Volatile
     var available = true
+        private set
 
-    private var mDetectedOrientation = 0
-
+    private var detectedOrientation = 0
 
     init {
-        val screenHeight = ScreenMetrics.getOrientationAwareScreenHeight(orientation)
-        val screenWidth = ScreenMetrics.getOrientationAwareScreenWidth(orientation)
-        mImageReader = createImageReader(screenWidth, screenHeight)
-        mediaProjection.registerCallback(object : MediaProjection.Callback() {
-            override fun onStop() {
-                available = false
-                release()
-            }
-        }, mHandler)
-        mVirtualDisplay = createVirtualDisplay(screenWidth, screenHeight, screenDensity)
+        val h = ScreenMetrics.getOrientationAwareScreenHeight(orientation)
+        val w = ScreenMetrics.getOrientationAwareScreenWidth(orientation)
+        imageReader = createImageReader(w, h)
+        virtualDisplay = createVirtualDisplay(w, h, screenDensity)
     }
 
     private fun createImageReader(width: Int, height: Int): ImageReader {
         return ImageReader.newInstance(width, height, PixelFormat.RGBA_8888, 3).apply {
-            setOnImageAvailableListener({
+            setOnImageAvailableListener({ reader ->
                 try {
+                    val image = reader.acquireLatestImage() ?: return@setOnImageAvailableListener
+                    if (!publishSubject.hasObservers()) {
+                        latestImage.getAndSet(image)?.close()
+                        return@setOnImageAvailableListener
+                    }
                     executor.submit {
-                        val image = acquireLatestImage()
-                        if (image == null) return@submit
-                        if (publishSubject.hasObservers()) {
-                            val bitmap = ImageWrapper.toBitmap(image)
-                            image.close()
-                            cachedImageBitmap.set(bitmap)
-                            publishSubject.onNext(ImageWrapper.ofBitmap(bitmap))
-                        } else {
-                            latestImage.getAndSet(image)?.close()
+                        try {
+                            val bmp = ImageWrapper.toBitmap(image)
+                            cachedImageBitmap.set(bmp)
+                            publishSubject.onNext(ImageWrapper.ofBitmap(bmp))
+                        } catch (_: Throwable) {
+                        } finally {
+                            try { image.close() } catch (_: Throwable) {}
                         }
                     }
-                } catch (_: Exception) {
+                } catch (_: Throwable) {
                 }
-            }, mHandler)
+            }, imageHandler)
         }
     }
 
-    private fun createVirtualDisplay(width: Int, height: Int, screenDensity: Int): VirtualDisplay {
+    private fun createVirtualDisplay(width: Int, height: Int, density: Int): VirtualDisplay {
         return mediaProjection.createVirtualDisplay(
             LOG_TAG,
-            width, height, screenDensity, DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
-            mImageReader.surface, null, null
+            width, height, density,
+            DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
+            imageReader.surface,
+            null,
+            null
         )
     }
 
     fun setOrientation(orientation: Int, context: Context) {
-        mDetectedOrientation = context.resources.configuration.orientation
-        refreshVirtualDisplay(if (orientation == ORIENTATION_AUTO) mDetectedOrientation else orientation)
+        detectedOrientation = context.resources.configuration.orientation
+        val target = if (orientation == ORIENTATION_AUTO) detectedOrientation else orientation
+        refreshVirtualDisplay(target)
     }
 
+    /**
+     * ⚠️ 不能对同一个 MediaProjection 多次 createVirtualDisplay（某些系统会直接 SecurityException）
+     * 所以这里采用：重建 ImageReader + virtualDisplay.resize + virtualDisplay.surface=新 surface
+     */
     private fun refreshVirtualDisplay(orientation: Int) = synchronized(this) {
-        latestImage.set(null)
-        mImageReader.close()
-        val screenHeight = ScreenMetrics.getOrientationAwareScreenHeight(orientation)
-        val screenWidth = ScreenMetrics.getOrientationAwareScreenWidth(orientation)
-        mImageReader = createImageReader(screenWidth, screenHeight)
-        mVirtualDisplay.surface = mImageReader.surface
-        mVirtualDisplay.resize(screenWidth, screenHeight, screenDensity)
+        if (!available) return@synchronized
+
+        latestImage.getAndSet(null)?.close()
+
+        val h = ScreenMetrics.getOrientationAwareScreenHeight(orientation)
+        val w = ScreenMetrics.getOrientationAwareScreenWidth(orientation)
+
+        val oldReader = imageReader
+        val newReader = try {
+            createImageReader(w, h)
+        } catch (t: Throwable) {
+            Log.w(LOG_TAG, "createImageReader failed: ${t.message}")
+            return@synchronized
+        }
+
+        imageReader = newReader
+
+        try {
+            // 先换 surface 再 resize（顺序不同 ROM 表现不一，建议两步都做）
+            virtualDisplay.surface = newReader.surface
+            virtualDisplay.resize(w, h, screenDensity)
+        } catch (t: Throwable) {
+            // 这里不能 fallback createVirtualDisplay（会再次触发 SecurityException）
+            Log.w(LOG_TAG, "VirtualDisplay resize/surface failed: ${t.message}")
+            // 回滚到旧 reader，尽量保持可用
+            try { newReader.close() } catch (_: Throwable) {}
+            imageReader = oldReader
+            return@synchronized
+        }
+
+        try { oldReader.close() } catch (_: Throwable) {}
     }
 
     fun capture(): Image? {
         if (!available) throw Exception("ScreenCapturer is not available")
-        val newImage = latestImage.getAndSet(null)
-        return newImage
+        return latestImage.getAndSet(null)
     }
 
     fun registerAsyncCapture(scheduler: Scheduler, onNext: Consumer<ImageWrapper>): Disposable {
         val eventProcessing = AtomicReference(false)
-        return publishSubject.filter {
-            eventProcessing.getAndSet(true) != true
-        }.observeOn(scheduler).subscribe {
-            try {
-                onNext.accept(it)
-            } finally {
-                eventProcessing.set(false)
-            }
-        }
+        return publishSubject
+            .filter { eventProcessing.getAndSet(true) != true }
+            .observeOn(scheduler)
+            .subscribe({
+                try { onNext.accept(it) } finally { eventProcessing.set(false) }
+            }, { eventProcessing.set(false) })
     }
 
     fun createImageWrapper(image: Image): ImageWrapper {
         val bitmap = ImageWrapper.toBitmap(image)
-        image.close()
+        try { image.close() } catch (_: Throwable) {}
         cachedImageBitmap.set(bitmap)
         return ImageWrapper.ofBitmap(bitmap)
     }
 
     suspend fun captureImageWrapper(): ImageWrapper {
-        val imageWrapper = synchronized(this) {
-            val image = capture()
-            if (image != null) createImageWrapper(image) else null
-        }
-        if (imageWrapper != null) return imageWrapper
+        val direct = synchronized(this) { capture()?.let { createImageWrapper(it) } }
+        if (direct != null) return direct
+
         cachedImageBitmap.get()?.let {
             Log.i(LOG_TAG, "Using cached image")
             return ImageWrapper.ofBitmap(it)
         }
-        //在缓存图像均不可用的情况下等待2秒取得截图，否则抛出错误
+
         return withTimeout(2000) {
-            var img: ImageWrapper? = null
-            while (true) {
+            var result: ImageWrapper? = null
+            while (result == null) {
                 delay(200)
-                img = synchronized(this) {
-                    capture()?.let {
-                        createImageWrapper(it)
-                    }
-                }
-                if (img !== null) {
-                    break
+                result = synchronized(this@ScreenCapturer) {
+                    capture()?.let { createImageWrapper(it) }
                 }
             }
-            img!!
+            result
         }
     }
 
     fun release() = synchronized(this) {
+        if (!available) return@synchronized
         available = false
-        mVirtualDisplay.release()
-        mImageReader.close()
-        executor.shutdown()
-        cachedImageBitmap.set(null)
-        latestImage.getAndSet(null)?.close()
-    }
 
-    @Throws(Throwable::class)
-    protected fun finalize() {
-        release()
+        try { latestImage.getAndSet(null)?.close() } catch (_: Throwable) {}
+        try { virtualDisplay.release() } catch (_: Throwable) {}
+        try { imageReader.close() } catch (_: Throwable) {}
+        try { executor.shutdownNow() } catch (_: Throwable) {}
+        try { imageThread.quitSafely() } catch (_: Throwable) {}
+
+        cachedImageBitmap.set(null)
+        try { publishSubject.onComplete() } catch (_: Throwable) {}
     }
 
     companion object {
-        @JvmStatic
-        val ORIENTATION_AUTO = Configuration.ORIENTATION_UNDEFINED
-
-        @JvmStatic
-        val ORIENTATION_LANDSCAPE = Configuration.ORIENTATION_LANDSCAPE
-
-        @JvmStatic
-        val ORIENTATION_PORTRAIT = Configuration.ORIENTATION_PORTRAIT
+        @JvmStatic val ORIENTATION_AUTO = Configuration.ORIENTATION_UNDEFINED
+        @JvmStatic val ORIENTATION_LANDSCAPE = Configuration.ORIENTATION_LANDSCAPE
+        @JvmStatic val ORIENTATION_PORTRAIT = Configuration.ORIENTATION_PORTRAIT
         private const val LOG_TAG = "ScreenCapturer"
     }
 }

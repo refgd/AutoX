@@ -25,7 +25,9 @@ import com.stardust.util.ScreenMetrics
 import io.reactivex.rxjava3.android.schedulers.AndroidSchedulers
 import io.reactivex.rxjava3.disposables.Disposable
 import io.reactivex.rxjava3.functions.Consumer
+import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
 import org.opencv.core.Point
 import org.opencv.core.Rect
 import org.opencv.imgproc.Imgproc
@@ -44,20 +46,33 @@ class Images(
     private val mScriptRuntime: ScriptRuntime,
     private val mScreenCaptureRequester: ScreenCaptureRequester
 ) {
+    private val appContext: Context = mContext.applicationContext
     private val mScreenMetrics: ScreenMetrics = mScriptRuntime.screenMetrics
     private val disposables = mutableListOf<Disposable>()
 
     @ScriptVariable
     val colorFinder: ColorFinder = ColorFinder(mScreenMetrics)
 
+    /**
+     * 记住最近一次请求截图时的方向；脚本只调用 captureScreen() 时也能用它来重连
+     */
+    @Volatile
+    private var lastOrientation: Int =
+        com.stardust.autojs.core.image.capture.ScreenCapturer.ORIENTATION_AUTO
+
+    /**
+     * 显式请求截图权限（脚本常用）
+     */
     fun requestScreenCapture(orientation: Int): Boolean = runBlocking {
         try {
-            mScreenCaptureRequester.requestScreenCapture(
-                mContext, orientation
-            )
-            captureScreen()
+            lastOrientation = orientation
+            mScreenCaptureRequester.requestScreenCapture(appContext, orientation)
+
+            // 预热：最多等一小会儿拿首帧，降低后续首帧抖动；拿不到也别卡太久
+            warmUpCapture(maxMs = 450)
+
             true
-        } catch (e: Exception) {
+        } catch (e: Throwable) {
             mScriptRuntime.toast(e.message)
             Log.e(Images::class.java.name, "请求截图权限失败", e)
             false
@@ -68,30 +83,47 @@ class Images(
         mScreenCaptureRequester.recycle()
     }
 
-    @Synchronized
+    /**
+     * 同步拿一张截图：
+     * - 若锁屏/系统 stop 导致丢失：会自动 request（无感重连优先，必要时弹授权）
+     * - single-flight/timeout/reconnect 都由 ScreenCaptureManager 统一处理
+     */
     fun captureScreen(): ImageWrapper {
-        val screenCapture = mScreenCaptureRequester.screenCapture
-        checkNotNull(screenCapture) { SecurityException("No screen capture permission") }
-        return runBlocking {
-            screenCapture.captureImageWrapper()
+        val sc0 = mScreenCaptureRequester.screenCapture
+        if (sc0 != null && sc0.available) {
+            return runBlocking { sc0.captureImageWrapper() }
         }
+
+        runBlocking {
+            mScreenCaptureRequester.requestScreenCapture(appContext, lastOrientation)
+        }
+
+        val sc = mScreenCaptureRequester.screenCapture
+        checkNotNull(sc) { SecurityException("No screen capture permission") }
+        if (!sc.available) throw IllegalStateException("ScreenCapturer is not available")
+        return runBlocking { sc.captureImageWrapper() }
     }
 
+    /**
+     * 严格版异步订阅：不自动弹授权/不自动重连（避免后台弹 UI）
+     * - 要求脚本先显式 requestScreenCapture()
+     */
     fun registerAsyncCapture(onNext: Consumer<ImageWrapper>): Disposable {
-        val screenCapture = mScreenCaptureRequester.screenCapture
-        checkNotNull(screenCapture) { SecurityException("No screen capture permission") }
+        val sc = mScreenCaptureRequester.screenCapture
+        checkNotNull(sc) { SecurityException("No screen capture permission") }
+        if (!sc.available) throw IllegalStateException("ScreenCapturer is not available")
+
         val scheduler = AndroidSchedulers.from(mScriptRuntime.loopers.servantLooper)
         var disposable: Disposable? = null
-        disposable = screenCapture.registerAsyncCapture(scheduler, {
+        disposable = sc.registerAsyncCapture(scheduler, { img ->
             try {
-                onNext.accept(it)
+                onNext.accept(img)
             } catch (e: Throwable) {
                 disposable?.dispose()
                 mScriptRuntime.exit(e)
             }
-        }).also {
-            disposables.add(it)
-        }
+        }).also { disposables.add(it) }
+
         return disposable
     }
 
@@ -102,9 +134,15 @@ class Images(
         return true
     }
 
-    fun copy(image: ImageWrapper): ImageWrapper {
-        return image.clone()
+    /**
+     * 释放异步订阅
+     */
+    fun releaseScreenCapturer() {
+        disposables.forEach { it.dispose() }
+        disposables.clear()
     }
+
+    fun copy(image: ImageWrapper): ImageWrapper = image.clone()
 
     @Throws(IOException::class)
     fun save(image: ImageWrapper, path: String?, format: String, quality: Int): Boolean {
@@ -113,15 +151,14 @@ class Images(
         val bitmap = image.getBitmap()
         val outputStream = FileOutputStream(mScriptRuntime.files.path(path))
         return outputStream.use { out ->
-            val compress = bitmap.compress(compressFormat, quality, out)
+            val ok = bitmap.compress(compressFormat, quality, out)
             out.flush()
-            compress
+            ok
         }
     }
 
     fun rotate(img: ImageWrapper, x: Float, y: Float, degree: Float): ImageWrapper {
-        val matrix = Matrix()
-        matrix.postRotate(degree, x, y)
+        val matrix = Matrix().apply { postRotate(degree, x, y) }
         return ImageWrapper.ofBitmap(
             Bitmap.createBitmap(
                 img.getBitmap(),
@@ -144,9 +181,7 @@ class Images(
         return ImageWrapper.ofBitmap(bitmap)
     }
 
-    fun fromBase64(data: String): ImageWrapper? {
-        return ImageWrapper.ofBitmap(Drawables.loadBase64Data(data))
-    }
+    fun fromBase64(data: String): ImageWrapper? = ImageWrapper.ofBitmap(Drawables.loadBase64Data(data))
 
     fun toBase64(wrapper: ImageWrapper, format: String, quality: Int): String {
         return Base64.encodeToString(toBytes(wrapper, format, quality), Base64.NO_WRAP)
@@ -165,31 +200,30 @@ class Images(
         return ImageWrapper.ofBitmap(BitmapFactory.decodeByteArray(bytes, 0, bytes.size))
     }
 
-    private fun parseImageFormat(format: String): CompressFormat? {
-        when (format) {
-            "png" -> return CompressFormat.PNG
-            "jpeg", "jpg" -> return CompressFormat.JPEG
-            "webp" -> return CompressFormat.WEBP
-        }
-        return null
+    private fun parseImageFormat(format: String): CompressFormat? = when (format) {
+        "png" -> CompressFormat.PNG
+        "jpeg", "jpg" -> CompressFormat.JPEG
+        "webp" -> CompressFormat.WEBP
+        else -> null
     }
 
     fun load(src: String): ImageWrapper? {
         return try {
             val url = URL(src)
-            val connection = url.openConnection() as HttpURLConnection
-            connection.doInput = true
+            val connection = (url.openConnection() as HttpURLConnection).apply {
+                doInput = true
+                connectTimeout = 8000
+                readTimeout = 8000
+                instanceFollowRedirects = true
+            }
             connection.connect()
-            val input = connection.inputStream
-            val bitmap = BitmapFactory.decodeStream(input)
-            ImageWrapper.ofBitmap(bitmap)
-        } catch (e: IOException) {
+            connection.inputStream.use { input ->
+                val bitmap = BitmapFactory.decodeStream(input)
+                ImageWrapper.ofBitmap(bitmap)
+            }
+        } catch (_: IOException) {
             null
         }
-    }
-
-    fun releaseScreenCapturer() {
-        disposables.forEach { it.dispose() }
     }
 
     @JvmOverloads
@@ -215,23 +249,30 @@ class Images(
         initOpenCvIfNeeded()
         if (image == null) throw NullPointerException("image = null")
         if (template == null) throw NullPointerException("template = null")
-        var src = image.getMat()
-        if (rect != null) {
-            src = Mat(src, rect)
-        }
+
+        val full = image.getMat()
+        val src = if (rect != null) Mat(full, rect) else full
+
         val point = TemplateMatching.fastTemplateMatching(
-            src, template.getMat(), TemplateMatching.MATCHING_METHOD_DEFAULT,
-            weakThreshold, threshold, maxLevel, transparentMask
+            src,
+            template.getMat(),
+            TemplateMatching.MATCHING_METHOD_DEFAULT,
+            weakThreshold,
+            threshold,
+            maxLevel,
+            transparentMask
         )
+
         if (point != null) {
             if (rect != null) {
                 point.x += rect.x.toDouble()
                 point.y += rect.y.toDouble()
             }
             point.x = mScreenMetrics.scaleX(point.x.toInt()).toDouble()
-            point.y = mScreenMetrics.scaleX(point.y.toInt()).toDouble()
+            point.y = mScreenMetrics.scaleY(point.y.toInt()).toDouble() // 修复：Y 用 scaleY
         }
-        if (src !== image.getMat()) {
+
+        if (src !== full) {
             OpenCVHelper.release(src)
         }
         return point
@@ -251,101 +292,92 @@ class Images(
         initOpenCvIfNeeded()
         if (image == null) throw NullPointerException("image = null")
         if (template == null) throw NullPointerException("template = null")
-        var src = image.getMat()
-        if (rect != null) {
-            src = Mat(src, rect)
-        }
+
+        val full = image.getMat()
+        val src = if (rect != null) Mat(full, rect) else full
 
         val result = TemplateMatching.fastTemplateMatching(
-            src, template.getMat(), Imgproc.TM_CCOEFF_NORMED,
-            weakThreshold, threshold, maxLevel, limit, transparentMask
+            src,
+            template.getMat(),
+            Imgproc.TM_CCOEFF_NORMED,
+            weakThreshold,
+            threshold,
+            maxLevel,
+            limit,
+            transparentMask
         )
+
         for (match in result) {
-            val point = match.point
+            val p = match.point
             if (rect != null) {
-                point.x += rect.x.toDouble()
-                point.y += rect.y.toDouble()
+                p.x += rect.x.toDouble()
+                p.y += rect.y.toDouble()
             }
-            point.x = mScreenMetrics.scaleX(point.x.toInt()).toDouble()
-            point.y = mScreenMetrics.scaleX(point.y.toInt()).toDouble()
+            p.x = mScreenMetrics.scaleX(p.x.toInt()).toDouble()
+            p.y = mScreenMetrics.scaleY(p.y.toInt()).toDouble()
         }
-        if (src !== image.getMat()) {
+
+        if (src !== full) {
             OpenCVHelper.release(src)
         }
         return result
     }
 
-    fun newMat(): Mat {
-        return Mat()
-    }
+    fun newMat(): Mat = Mat()
 
-    fun newMat(mat: Mat?, roi: Rect?): Mat {
-        return Mat(mat, roi)
-    }
+    fun newMat(mat: Mat?, roi: Rect?): Mat = Mat(mat, roi)
 
     fun initOpenCvIfNeeded() {
-        if (OpenCVHelper.isInitialized.isCompleted) {
-            return
-        }
+        if (OpenCVHelper.isInitialized.isCompleted) return
+
         val currentActivity = mScriptRuntime.app.currentActivity
-        val context = currentActivity ?: mContext
+        val context = currentActivity ?: appContext
         mScriptRuntime.console.info("opencv initializing")
         OpenCVHelper.initIfNeeded(context)
         mScriptRuntime.console.info("opencv initialized")
     }
 
-
     fun pixel(image: ImageWrapper?, x: Int, y: Int): Int {
-        if (image == null) {
-            throw NullPointerException("image = null")
-        }
+        if (image == null) throw NullPointerException("image = null")
         return image.pixel(x, y)
     }
 
     fun concat(img1: ImageWrapper, img2: ImageWrapper, direction: Int): ImageWrapper {
-        var img1 = img1
-        var img2 = img2
+        var a = img1
+        var b = img2
         require(
-            listOf(
-                Gravity.LEFT,
-                Gravity.RIGHT,
-                Gravity.TOP,
-                Gravity.BOTTOM
-            ).contains(direction)
+            direction == Gravity.LEFT ||
+                direction == Gravity.RIGHT ||
+                direction == Gravity.TOP ||
+                direction == Gravity.BOTTOM
         ) { "unknown direction $direction" }
+
+        if (direction == Gravity.LEFT || direction == Gravity.TOP) {
+            val tmp = a
+            a = b
+            b = tmp
+        }
+
         val width: Int
         val height: Int
-        if (direction == Gravity.LEFT || direction == Gravity.TOP) {
-            val tmp = img1
-            img1 = img2
-            img2 = tmp
-        }
         if (direction == Gravity.LEFT || direction == Gravity.RIGHT) {
-            width = img1.getWidth() + img2.getWidth()
-            height = Math.max(img1.getHeight(), img2.getHeight())
+            width = a.getWidth() + b.getWidth()
+            height = maxOf(a.getHeight(), b.getHeight())
         } else {
-            width = Math.max(img1.getWidth(), img2.getWidth())
-            height = img1.getHeight() + img2.getHeight()
+            width = maxOf(a.getWidth(), b.getWidth())
+            height = a.getHeight() + b.getHeight()
         }
+
         val bitmap = createBitmap(width, height)
         val canvas = Canvas(bitmap)
         val paint = Paint()
+
         if (direction == Gravity.LEFT || direction == Gravity.RIGHT) {
-            canvas.drawBitmap(img1.getBitmap(), 0f, ((height - img1.getHeight()) / 2).toFloat(), paint)
-            canvas.drawBitmap(
-                img2.getBitmap(),
-                img1.getWidth().toFloat(),
-                ((height - img2.getHeight()) / 2).toFloat(),
-                paint
-            )
+            canvas.drawBitmap(a.getBitmap(), 0f, ((height - a.getHeight()) / 2f), paint)
+            canvas.drawBitmap(b.getBitmap(), a.getWidth().toFloat(), ((height - b.getHeight()) / 2f), paint)
         } else {
-            canvas.drawBitmap(img1.getBitmap(), ((width - img1.getWidth()) / 2).toFloat(), 0f, paint)
-            canvas.drawBitmap(
-                img2.getBitmap(),
-                ((width - img2.getWidth()) / 2).toFloat(),
-                img1.getHeight().toFloat(),
-                paint
-            )
+            canvas.drawBitmap(a.getBitmap(), ((width - a.getWidth()) / 2f), 0f, paint)
+            canvas.drawBitmap(b.getBitmap(), ((width - b.getWidth()) / 2f), a.getHeight().toFloat(), paint)
         }
         return ImageWrapper.ofBitmap(bitmap)
     }
@@ -359,16 +391,27 @@ class Images(
     }
 
     fun scaleBitmap(origin: Bitmap?, newWidth: Int, newHeight: Int): Bitmap? {
-        if (origin == null) {
-            return null
-        }
-        val height = origin.height
+        if (origin == null) return null
         val width = origin.width
-        val scaleWidth = newWidth.toFloat() / width
-        val scaleHeight = newHeight.toFloat() / height
-        val matrix = Matrix()
-        matrix.postScale(scaleWidth, scaleHeight)
+        val height = origin.height
+        val matrix = Matrix().apply {
+            postScale(newWidth.toFloat() / width, newHeight.toFloat() / height)
+        }
         return Bitmap.createBitmap(origin, 0, 0, width, height, matrix, false)
     }
 
+    private suspend fun warmUpCapture(maxMs: Long) {
+        val sc = mScreenCaptureRequester.screenCapture ?: return
+        if (!sc.available) return
+
+        try {
+            withTimeout(maxMs) {
+                sc.captureImageWrapper()
+            }
+        } catch (_: TimeoutCancellationException) {
+            // ignore
+        } catch (_: Throwable) {
+            // ignore
+        }
+    }
 }
