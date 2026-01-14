@@ -49,7 +49,10 @@ class ActivityInfoProvider(private val context: Context) : AccessibilityDelegate
     override fun onAccessibilityEvent(
         service: AccessibilityService, event: AccessibilityEvent
     ): Boolean {
-        if (event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED || event.eventType == AccessibilityEvent.WINDOWS_CHANGE_ACTIVE) {
+        if (event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED ||
+            event.eventType == AccessibilityEvent.TYPE_WINDOWS_CHANGED ||
+            event.eventType == AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED ||
+            event.eventType == AccessibilityEvent.TYPE_VIEW_FOCUSED) {
             val window = service.getWindow(event.windowId)
             if (window?.isFocused != false) {
                 setLatestComponent(event.packageName, event.className)

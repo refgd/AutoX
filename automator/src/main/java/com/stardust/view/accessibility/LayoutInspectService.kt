@@ -12,6 +12,7 @@ class LayoutInspectService : AccessibilityService() {
 
     override fun onServiceConnected() {
         val info = serviceInfo
+        info.flags = info.flags or AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS
         info.flags = info.flags or AccessibilityServiceInfo.FLAG_INCLUDE_NOT_IMPORTANT_VIEWS
         serviceInfo = info
         super.onServiceConnected()
