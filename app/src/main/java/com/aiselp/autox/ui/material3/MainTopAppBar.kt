@@ -14,7 +14,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
-import com.aiselp.autojs.codeeditor.EditActivity
+import org.autojs.autojs.ui.edit.EditActivity
 import com.aiselp.autox.ui.material3.components.MenuTopAppBar
 import org.autojs.autojs.ui.log.LogActivityKt
 import org.autojs.autojs.ui.main.BottomNavigationItem

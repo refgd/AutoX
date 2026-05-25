@@ -131,7 +131,7 @@ android {
                     delete(
                         fileTree(outputDir) {
                             include(
-                                "codeeditor/**/*", "template.apk"
+                                "template.apk"
                             )
                         })
                 }
@@ -227,7 +227,6 @@ dependencies {
     // Optional, if you use support library fragments:
     implementation(project(":autojs"))
     implementation(project(":apkbuilder"))
-    implementation(project(":codeeditor"))
 
     // ViewModel
     implementation(libs.lifecycle.viewmodel.ktx)

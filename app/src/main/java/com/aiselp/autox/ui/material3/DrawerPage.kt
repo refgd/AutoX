@@ -169,16 +169,6 @@ private fun AccessibilityServiceSwitch() {
                 toast(context, R.string.text_accessibility_service_is_not_enable)
             }
         }
-    val editor = remember { mutableStateOf(Pref.getEditor()) }
-    Watch(editor) {
-        Pref.setEditor(editor.value)
-    }
-    SettingOptionSwitch(
-        icon = Icons.Default.Edit,
-        title = "启用新编辑器",
-        value = editor,
-        tint = Color(0xFF996231)
-    )
     SettingOptionSwitch(
         icon = {
             Icon(

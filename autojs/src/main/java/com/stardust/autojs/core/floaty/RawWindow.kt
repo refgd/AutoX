@@ -88,4 +88,10 @@ class RawWindow(rawFloaty: RawFloaty, context: Context) : FloatyWindow() {
         }
         updateWindowLayoutParams(windowLayoutParams)
     }
+
+    fun setAlpha(alpha: Float) {
+        val windowLayoutParams: WindowManager.LayoutParams = windowLayoutParams
+        windowLayoutParams.alpha = alpha
+        updateWindowLayoutParams(windowLayoutParams)
+    }
 }

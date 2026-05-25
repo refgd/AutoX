@@ -6,6 +6,7 @@ import android.os.Looper
 import android.view.ContextThemeWrapper
 import android.view.View
 import android.view.ViewGroup
+import android.view.WindowManager
 import com.stardust.autojs.R
 import com.stardust.autojs.core.floaty.BaseResizableFloatyWindow
 import com.stardust.autojs.core.floaty.RawWindow
@@ -136,6 +137,10 @@ class Floaty(private val mUiHandler: UiHandler, ui: UI, private val mRuntime: Sc
 
         fun setTouchable(touchable: Boolean) {
             runWithWindow { mWindow.setTouchable(touchable) }
+        }
+
+        fun setAlpha(alpha: Float) {
+            runWithWindow { mWindow.setAlpha(alpha) }
         }
 
         private fun runWithWindow(r: Runnable) {
